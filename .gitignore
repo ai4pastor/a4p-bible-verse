@@ -6,3 +6,6 @@ data.json
 
 # 실제 볼트 노트 사본 (개인 연구 내용 + 역본 저작권) — 로컬 전용
 tests/fixtures/
+
+# 로컬 작업 메모 (세션 이어가기)
+docs/RESUME.md
