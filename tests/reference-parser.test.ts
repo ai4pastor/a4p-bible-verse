@@ -138,8 +138,8 @@ describe("오류 처리", () => {
   it("장·절 없음", () => {
     expect(fail("요한복음")).toContain("장·절");
   });
-  it("장 경계 범위 미지원", () => {
-    expect(fail("요3:36-4:2")).toContain("장을 넘는 범위");
+  it("끝 장 < 시작 장", () => {
+    expect(fail("요4:1-3:36")).toContain("끝 장이 시작 장보다");
   });
   it("끝 절 < 시작 절", () => {
     expect(fail("요3:20-16")).toContain("앞설 수 없습니다");
@@ -149,6 +149,34 @@ describe("오류 처리", () => {
   });
   it("0절", () => {
     fail("요3:0");
+  });
+});
+
+describe("장 경계 범위", () => {
+  it("요3:36-4:2", () => {
+    expect(ok("요3:36-4:2")).toMatchObject({
+      abbrev: "요",
+      chapter: 3,
+      verseStart: 36,
+      chapterEnd: 4,
+      verseEnd: 2,
+    });
+  });
+  it("요한복음 3장 36절-4장 2절", () => {
+    expect(ok("요한복음 3장 36절-4장 2절")).toMatchObject({
+      chapter: 3,
+      verseStart: 36,
+      chapterEnd: 4,
+      verseEnd: 2,
+    });
+  });
+  it("같은 장이면 일반 범위로 정규화 (chapterEnd 없음)", () => {
+    const ref = ok("요3:16-3:20");
+    expect(ref).toMatchObject({ chapter: 3, verseStart: 16, verseEnd: 20 });
+    expect(ref.chapterEnd).toBeUndefined();
+  });
+  it("같은 장 역순은 오류", () => {
+    expect(fail("요3:20-3:16")).toContain("끝 절이 시작 절보다");
   });
 });
 
@@ -187,5 +215,8 @@ describe("formatReference", () => {
   });
   it("장 전체 — 시편은 편", () => {
     expect(formatReference(ok("시23편"))).toBe("시편 23편");
+  });
+  it("장 경계 범위", () => {
+    expect(formatReference(ok("요3:36-4:2"))).toBe("요한복음 3:36-4:2");
   });
 });

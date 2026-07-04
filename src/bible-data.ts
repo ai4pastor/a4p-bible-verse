@@ -1,7 +1,7 @@
 import { App, TFile, TFolder } from "obsidian";
 import { BOOK_BY_ABBREV, BOOKS } from "./books";
-import { extractVerseTexts } from "./note-parser";
-import { BibleReference, VerseData } from "./types";
+import { extractVerseTexts, stripAnnotations } from "./note-parser";
+import { BibleReference, VerseData, Version } from "./types";
 
 export interface LoadResult {
   verses: VerseData[];
@@ -150,8 +150,8 @@ export class BibleData {
     return { ok, messages };
   }
 
-  /** 참조가 가리키는 절들의 본문을 로드한다 (범위 클램프 포함). */
-  async loadVerses(ref: BibleReference): Promise<LoadOutcome> {
+  /** 참조가 가리키는 절들의 본문을 로드한다 (범위 클램프·장 경계 범위 포함). */
+  async loadVerses(ref: BibleReference, strip = false): Promise<LoadOutcome> {
     const folderError = this.ensureFolderCache();
     if (folderError) return { ok: false, reason: folderError };
 
@@ -160,10 +160,10 @@ export class BibleData {
       return { ok: false, reason: `볼트에서 ${ref.bookName} 폴더를 찾지 못했습니다.` };
     }
 
+    const unit = ref.bookName === "시편" ? "편" : "장";
     const available = this.chapterVerses(ref.abbrev, ref.chapter);
     if (available.length === 0) {
       const max = this.maxChapter(ref.abbrev);
-      const unit = ref.bookName === "시편" ? "편" : "장";
       return {
         ok: false,
         reason:
@@ -173,14 +173,42 @@ export class BibleData {
       };
     }
 
-    const lastVerse = available[available.length - 1];
-    let targets: number[];
+    let targets: Array<{ chapter: number; verse: number }>;
     let notice: string | undefined;
-    const unit = ref.bookName === "시편" ? "편" : "장";
 
-    if (ref.verseStart === undefined) {
-      targets = available;
+    if (ref.chapterEnd !== undefined && ref.chapterEnd !== ref.chapter) {
+      // 장 경계 범위 (요3:36-4:2)
+      targets = [];
+      for (let ch = ref.chapter; ch <= ref.chapterEnd; ch++) {
+        const chVerses = this.chapterVerses(ref.abbrev, ch);
+        if (chVerses.length === 0) {
+          const max = this.maxChapter(ref.abbrev);
+          return { ok: false, reason: `${ref.bookName}은(는) ${max}${unit}까지 있습니다.` };
+        }
+        const last = chVerses[chVerses.length - 1];
+        let from = 1;
+        let to = last;
+        if (ch === ref.chapter) {
+          if (ref.verseStart! > last) {
+            return {
+              ok: false,
+              reason: `${ref.bookName} ${ch}${unit}은 ${last}절까지 있습니다.`,
+            };
+          }
+          from = ref.verseStart!;
+        }
+        if (ch === ref.chapterEnd) {
+          to = Math.min(ref.verseEnd!, last);
+          if (ref.verseEnd! > last) {
+            notice = `${ref.bookName} ${ch}${unit}은 ${last}절까지 있습니다 — ${ch}:${to}까지 표시합니다.`;
+          }
+        }
+        for (const v of chVerses) if (v >= from && v <= to) targets.push({ chapter: ch, verse: v });
+      }
+    } else if (ref.verseStart === undefined) {
+      targets = available.map((v) => ({ chapter: ref.chapter, verse: v }));
     } else {
+      const lastVerse = available[available.length - 1];
       if (ref.verseStart > lastVerse) {
         return {
           ok: false,
@@ -191,21 +219,30 @@ export class BibleData {
       if ((ref.verseEnd ?? ref.verseStart) > lastVerse) {
         notice = `${ref.bookName} ${ref.chapter}${unit}은 ${lastVerse}절까지 있습니다 — ${ref.verseStart}-${end}절로 표시합니다.`;
       }
-      targets = available.filter((v) => v >= ref.verseStart! && v <= end);
+      targets = available
+        .filter((v) => v >= ref.verseStart! && v <= end)
+        .map((v) => ({ chapter: ref.chapter, verse: v }));
     }
 
     const verses = await Promise.all(
-      targets.map(async (v): Promise<VerseData> => {
-        const linkTarget = `${ref.abbrev}${ref.chapter}_${v}`;
+      targets.map(async ({ chapter, verse }): Promise<VerseData> => {
+        const linkTarget = `${ref.abbrev}${chapter}_${verse}`;
         const file = this.app.vault.getAbstractFileByPath(`${folder.path}/${linkTarget}.md`);
-        if (!(file instanceof TFile)) return { verse: v, linkTarget, texts: {} };
+        if (!(file instanceof TFile)) return { chapter, verse, linkTarget, texts: {} };
         const content = await this.app.vault.cachedRead(file);
         const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+        const texts = extractVerseTexts(content);
+        if (strip) {
+          for (const key of Object.keys(texts) as Version[]) {
+            texts[key] = stripAnnotations(texts[key]!);
+          }
+        }
         return {
-          verse: v,
+          chapter,
+          verse,
           linkTarget,
           path: file.path,
-          texts: extractVerseTexts(content),
+          texts,
           related: extractRefLinks(fm?.["관련구절"]),
           parallel: extractRefLinks(fm?.["평행본문"]),
         };
@@ -213,6 +250,46 @@ export class BibleData {
     );
 
     return { ok: true, result: { verses, notice } };
+  }
+
+  /**
+   * 해당 절이 속한 장 통합주석 노트와 pericope 헤딩을 찾는다.
+   * 경로: {성경폴더}/{주석폴더}/{구약|신약}/{NN.책이름}/{책이름} {장}장 통합주석.md
+   * 헤딩: "## 3:14-17 - 제목" 중 절이 범위에 포함되는 것.
+   */
+  findCommentary(
+    abbrev: string,
+    chapter: number,
+    verse: number | null,
+    commentaryPath: string,
+  ): { path: string; heading?: string; label: string } | null {
+    if (!commentaryPath.trim()) return null;
+    if (this.ensureFolderCache() !== null) return null;
+    const folder = this.folderCache!.get(abbrev);
+    const book = BOOK_BY_ABBREV.get(abbrev);
+    if (!folder || !book) return null;
+
+    const basePath = this.getBiblePath().replace(/\/+$/, "");
+    const path = `${basePath}/${commentaryPath.trim().replace(/\/+$/, "")}/${book.testament}/${folder.name}/${book.name} ${chapter}장 통합주석.md`;
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) return null;
+
+    const fallbackLabel = `${book.name} ${chapter}장 통합주석`;
+    if (verse === null) return { path, label: fallbackLabel };
+
+    const headings = this.app.metadataCache.getFileCache(file)?.headings ?? [];
+    for (const h of headings) {
+      if (h.level !== 2) continue;
+      const m = h.heading.match(/^(\d+):(\d+)(?:-(\d+))?/);
+      if (!m) continue;
+      const ch = parseInt(m[1], 10);
+      const from = parseInt(m[2], 10);
+      const to = m[3] ? parseInt(m[3], 10) : from;
+      if (ch === chapter && verse >= from && verse <= to) {
+        return { path, heading: h.heading, label: h.heading };
+      }
+    }
+    return { path, label: fallbackLabel };
   }
 
   /**

@@ -5,8 +5,9 @@ import { BibleReference, ParseResult } from "./types";
 const CHAPTER_VERSE_RE =
   /^(\d+)(?:\s*[장편:._]|\s)?\s*(\d+)?\s*절?\s*(?:[-~–—]\s*(\d+)\s*절?)?$/;
 
-/** 장 경계를 넘는 범위: "3:36-4:2" 형태 감지용 */
-const CROSS_CHAPTER_RE = /\d+\s*[장:._]\s*\d+\s*[-~–—]\s*\d+\s*[장:._]\s*\d+/;
+/** 장 경계를 넘는 범위: "3:36-4:2", "3장 36절-4장 2절" */
+const CROSS_CHAPTER_RE =
+  /^(\d+)\s*[장:._]\s*(\d+)\s*절?\s*[-~–—]\s*(\d+)\s*[장:._]\s*(\d+)\s*절?$/;
 
 /**
  * 참조 문자열을 파싱한다.
@@ -36,10 +37,37 @@ export function parseReference(input: string): ParseResult {
     return { ok: false, reason: "장·절을 입력해주세요 (예: 요3:16, 시23편)" };
   }
 
-  if (CROSS_CHAPTER_RE.test(rest)) {
+  const cross = rest.match(CROSS_CHAPTER_RE);
+  if (cross) {
+    const chapter = parseInt(cross[1], 10);
+    const verseStart = parseInt(cross[2], 10);
+    const chapterEnd = parseInt(cross[3], 10);
+    const verseEnd = parseInt(cross[4], 10);
+    if (chapterEnd < chapter) {
+      return { ok: false, reason: "끝 장이 시작 장보다 앞설 수 없습니다" };
+    }
+    if (chapterEnd === chapter) {
+      if (verseEnd < verseStart) {
+        return { ok: false, reason: "끝 절이 시작 절보다 앞설 수 없습니다" };
+      }
+      return {
+        ok: true,
+        ref: { abbrev: book.abbrev, bookName: book.name, chapter, verseStart, verseEnd },
+      };
+    }
+    if (chapter < 1 || verseStart < 1 || verseEnd < 1) {
+      return { ok: false, reason: "장·절은 1 이상이어야 합니다" };
+    }
     return {
-      ok: false,
-      reason: "장을 넘는 범위는 지원하지 않습니다. 장별로 나눠 삽입해주세요.",
+      ok: true,
+      ref: {
+        abbrev: book.abbrev,
+        bookName: book.name,
+        chapter,
+        verseStart,
+        chapterEnd,
+        verseEnd,
+      },
     };
   }
 
@@ -100,14 +128,18 @@ export function parseLinkTarget(target: string): BibleReference | null {
   };
 }
 
-/** 표시용 정규화 문자열: "요한복음 3:16-20" / "시편 23편" */
+/** 표시용 정규화 문자열: "요한복음 3:16-20" / "시편 23편" / "요한복음 3:36-4:2" */
 export function formatReference(ref: {
   bookName: string;
   chapter: number;
   verseStart?: number;
   verseEnd?: number;
+  chapterEnd?: number;
 }): string {
   const unit = ref.bookName === "시편" ? "편" : "장";
+  if (ref.chapterEnd !== undefined && ref.chapterEnd !== ref.chapter) {
+    return `${ref.bookName} ${ref.chapter}:${ref.verseStart}-${ref.chapterEnd}:${ref.verseEnd}`;
+  }
   if (ref.verseStart === undefined) return `${ref.bookName} ${ref.chapter}${unit}`;
   if (ref.verseEnd === undefined || ref.verseEnd === ref.verseStart) {
     return `${ref.bookName} ${ref.chapter}:${ref.verseStart}`;

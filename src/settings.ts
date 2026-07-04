@@ -16,6 +16,10 @@ export interface BibleVerseSettings {
   parallelVersions: [Version, Version];
   /** "인용한 설교"를 찾을 폴더 — 비우면 성경 폴더 제외 전체 볼트 */
   sermonFolder: string;
+  /** 본문의 각주 마커·소제목(<...>, a) 등) 제거 여부 */
+  stripAnnotations: boolean;
+  /** 성경 폴더 기준 주석 폴더 상대 경로 — 비우면 주석 기능 끔 */
+  commentaryPath: string;
 }
 
 export const DEFAULT_SETTINGS: BibleVerseSettings = {
@@ -27,6 +31,8 @@ export const DEFAULT_SETTINGS: BibleVerseSettings = {
   parallelTrigger: ";;;",
   parallelVersions: ["새번역", "NIV"],
   sermonFolder: "300. Sermons",
+  stripAnnotations: false,
+  commentaryPath: "171. 성경주석",
 };
 
 export class BibleVerseSettingTab extends PluginSettingTab {
@@ -110,6 +116,35 @@ export class BibleVerseSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.suggestTrigger)
           .onChange(async (value) => {
             this.plugin.settings.suggestTrigger = value || DEFAULT_SETTINGS.suggestTrigger;
+            await this.plugin.persist();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("각주 표기 정리")
+      .setDesc(
+        "삽입·복사 시 본문에 섞인 소제목(<다윗의 노래>)과 각주 마커(a), (a. …))를 제거합니다.",
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.stripAnnotations)
+          .onChange(async (value) => {
+            this.plugin.settings.stripAnnotations = value;
+            await this.plugin.persist();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("주석 폴더 경로")
+      .setDesc(
+        "성경 폴더 기준 상대 경로. 장 통합주석 노트가 있으면 모달에 주석 바로가기가 표시됩니다. 비우면 끕니다.",
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder(DEFAULT_SETTINGS.commentaryPath)
+          .setValue(this.plugin.settings.commentaryPath)
+          .onChange(async (value) => {
+            this.plugin.settings.commentaryPath = value.trim();
             await this.plugin.persist();
           }),
       );

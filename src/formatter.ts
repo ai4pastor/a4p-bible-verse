@@ -35,12 +35,22 @@ export function verseRuns(nums: number[]): string {
   return runs.join(", ");
 }
 
-function headerLabel(opts: FormatOptions, nums: number[]): string {
+/** 절들이 여러 장에 걸쳐 있는가 (장 경계 범위) */
+function isMultiChapter(verses: VerseData[]): boolean {
+  return verses.some((v) => v.chapter !== verses[0].chapter);
+}
+
+function headerLabel(opts: FormatOptions, verses: VerseData[]): string {
   if (opts.wholeChapter) {
     const unit = opts.bookName === "시편" ? "편" : "장";
     return `${opts.bookName} ${opts.chapter}${unit}`;
   }
-  return `${opts.bookName} ${opts.chapter}:${verseRuns(nums)}`;
+  if (isMultiChapter(verses)) {
+    const first = verses[0];
+    const last = verses[verses.length - 1];
+    return `${opts.bookName} ${first.chapter}:${first.verse}-${last.chapter}:${last.verse}`;
+  }
+  return `${opts.bookName} ${verses[0].chapter}:${verseRuns(verses.map((v) => v.verse))}`;
 }
 
 /** 헤더의 역본 표기: "새번역" 또는 병렬이면 "새번역 · NIV" */
@@ -52,7 +62,7 @@ function versionLabel(opts: FormatOptions): string {
 
 function singleCallout(verse: VerseData, opts: FormatOptions): string {
   const text = verse.texts[opts.version] ?? "";
-  const label = `${opts.bookName} ${opts.chapter}:${verse.verse}`;
+  const label = `${opts.bookName} ${verse.chapter}:${verse.verse}`;
   const lines = [`> [!quote] [[${verse.linkTarget}|${label}]] (${versionLabel(opts)})`];
   for (const t of text.split("\n")) lines.push(`> ${t}`);
   const secondary = opts.secondaryVersion && verse.texts[opts.secondaryVersion];
@@ -62,13 +72,15 @@ function singleCallout(verse: VerseData, opts: FormatOptions): string {
 
 /**
  * 클립보드 복사용 플레인 텍스트 — 콜아웃·wikilink 없이 주보/PPT에 바로 붙여넣는 용도.
- * 단일 절은 절 번호 생략.
+ * 단일 절은 절 번호 생략. 장 경계 범위는 절 번호를 "장:절"로 표기.
  */
 export function formatPlainVerses(verses: VerseData[], opts: FormatOptions): string {
   if (verses.length === 0) return "";
-  const lines = [`${headerLabel(opts, verses.map((v) => v.verse))} (${versionLabel(opts)})`];
+  const multi = isMultiChapter(verses);
+  const lines = [`${headerLabel(opts, verses)} (${versionLabel(opts)})`];
   for (const v of verses) {
-    const prefix = verses.length > 1 ? `${v.verse} ` : "";
+    const num = multi ? `${v.chapter}:${v.verse}` : `${v.verse}`;
+    const prefix = verses.length > 1 ? `${num} ` : "";
     lines.push(`${prefix}${oneLine(v.texts[opts.version] ?? "")}`);
     const secondary = opts.secondaryVersion && v.texts[opts.secondaryVersion];
     if (secondary) lines.push(oneLine(secondary));
@@ -89,11 +101,14 @@ export function formatVerses(verses: VerseData[], opts: FormatOptions): string {
     return verses.map((v) => singleCallout(v, opts)).join("\n\n") + "\n";
   }
 
-  const header = headerLabel(opts, verses.map((v) => v.verse));
+  const multi = isMultiChapter(verses);
   const first = verses[0];
-  const lines = [`> [!quote] [[${first.linkTarget}|${header}]] (${versionLabel(opts)})`];
+  const lines = [
+    `> [!quote] [[${first.linkTarget}|${headerLabel(opts, verses)}]] (${versionLabel(opts)})`,
+  ];
   for (const v of verses) {
-    lines.push(`> [[${v.linkTarget}|${v.verse}]] ${oneLine(v.texts[opts.version] ?? "")}`);
+    const num = multi ? `${v.chapter}:${v.verse}` : `${v.verse}`;
+    lines.push(`> [[${v.linkTarget}|${num}]] ${oneLine(v.texts[opts.version] ?? "")}`);
     const secondary = opts.secondaryVersion && v.texts[opts.secondaryVersion];
     if (secondary) lines.push(`> _${oneLine(secondary)}_`);
   }

@@ -25,9 +25,11 @@ export class VerseInsertModal extends Modal {
   private citing: string[] = [];
 
   private version: Version;
+  /** Cmd+클릭으로 고른 병렬 역본 (null이면 단일 역본 삽입) */
+  private secondary: Version | null = null;
   private ref: BibleReference | null = null;
   private loaded: LoadResult | null = null;
-  private selected = new Set<number>();
+  private selected = new Set<string>(); // linkTarget 기준 (장 경계 범위에서 절 번호 중복 방지)
   private highlight = -1; // -1 = 입력창 존, 0+ = 목록 행 인덱스
   private debounceTimer: number | null = null;
   private requestId = 0;
@@ -168,7 +170,10 @@ export class VerseInsertModal extends Modal {
       if (id === this.requestId) this.listEl.setText("불러오는 중...");
     }, 150);
 
-    const outcome = await this.data.loadVerses(parsed.ref);
+    const outcome = await this.data.loadVerses(
+      parsed.ref,
+      this.plugin.settings.stripAnnotations,
+    );
     window.clearTimeout(loadingTimer);
     if (id !== this.requestId) return; // 더 새로운 검색이 이미 시작됨
 
@@ -184,7 +189,7 @@ export class VerseInsertModal extends Modal {
 
     this.ref = parsed.ref;
     this.loaded = outcome.result;
-    this.selected = new Set(outcome.result.verses.map((v) => v.verse));
+    this.selected = new Set(outcome.result.verses.map((v) => v.linkTarget));
     this.highlight = -1;
     this.citing = this.data.citingNotes(
       outcome.result.verses.map((v) => v.path ?? ""),
@@ -216,19 +221,40 @@ export class VerseInsertModal extends Modal {
   private renderVersionBar() {
     this.versionBarEl.empty();
     for (const v of VERSIONS) {
+      const cls = [
+        "bible-verse-version-btn",
+        v === this.version ? "is-active" : "",
+        v === this.secondary ? "is-secondary" : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
       const btn = this.versionBarEl.createEl("button", {
-        cls: `bible-verse-version-btn${v === this.version ? " is-active" : ""}`,
+        cls,
         text: v === "개역개정" ? "개역" : v === "쉬운성경" ? "쉬운" : v,
       });
-      btn.title = v;
+      btn.title = `${v} — 클릭: 역본 선택 · Cmd+클릭: 병렬 역본 지정/해제`;
       btn.tabIndex = -1;
-      btn.addEventListener("click", () => this.setVersion(v));
+      btn.addEventListener("click", (e) => {
+        if (e.metaKey || e.ctrlKey) this.toggleSecondary(v);
+        else this.setVersion(v);
+      });
     }
+  }
+
+  /** Cmd+클릭: 병렬 역본 지정/해제 — 지정되면 삽입·복사에 두 역본이 함께 들어간다 */
+  private toggleSecondary(v: Version) {
+    if (v === this.version) return;
+    this.secondary = this.secondary === v ? null : v;
+    this.renderVersionBar();
+    this.updateInsertButton();
   }
 
   private renderList() {
     this.listEl.empty();
     if (!this.loaded) return;
+    const multiChapter = this.loaded.verses.some(
+      (v) => v.chapter !== this.loaded!.verses[0].chapter,
+    );
 
     this.loaded.verses.forEach((verse, idx) => {
       const text = verse.texts[this.version];
@@ -239,27 +265,45 @@ export class VerseInsertModal extends Modal {
       });
 
       const checkbox = row.createEl("input", { type: "checkbox" });
-      checkbox.checked = this.selected.has(verse.verse) && !!text;
+      checkbox.checked = this.selected.has(verse.linkTarget) && !!text;
       checkbox.disabled = !text;
       checkbox.tabIndex = -1;
       checkbox.addEventListener("click", (e) => {
         e.stopPropagation();
-        this.toggleVerse(verse.verse);
+        this.toggleVerse(verse.linkTarget);
       });
 
-      row.createSpan({ cls: "bible-verse-num", text: String(verse.verse) });
+      row.createSpan({
+        cls: "bible-verse-num",
+        text: multiChapter ? `${verse.chapter}:${verse.verse}` : String(verse.verse),
+      });
       row.createSpan({
         cls: "bible-verse-text",
         text: text ? text.replace(/\s*\n\s*/g, " ") : `(${this.version} 본문 없음)`,
       });
 
+      this.registerHover(row, verse.linkTarget);
       row.addEventListener("click", () => {
         if (!text) return;
         this.highlight = idx;
-        this.toggleVerse(verse.verse);
+        this.toggleVerse(verse.linkTarget);
       });
     });
     this.updateInsertButton();
+  }
+
+  /** Cmd 호버 시 옵시디언 페이지 미리보기 (hover-editor 설치 시 그쪽으로 연동) */
+  private registerHover(el: HTMLElement, linktext: string) {
+    el.addEventListener("mouseover", (event) => {
+      this.app.workspace.trigger("hover-link", {
+        event,
+        source: "a4p-bible-verse",
+        hoverParent: this,
+        targetEl: el,
+        linktext,
+        sourcePath: "",
+      });
+    });
   }
 
   /** 하이라이트된 절(없으면 첫 절)의 관련구절·평행본문 칩 + 인용한 설교 줄 */
@@ -278,6 +322,7 @@ export class VerseInsertModal extends Modal {
         const ref = parseLinkTarget(target);
         btn.setText(ref ? formatReference(ref) : target);
         btn.tabIndex = -1;
+        this.registerHover(btn, target);
         btn.addEventListener("click", () => onClick(target));
       }
     };
@@ -294,6 +339,29 @@ export class VerseInsertModal extends Modal {
     chipRow("관련구절", verse.related ?? [], searchTarget);
     chipRow("평행본문", verse.parallel ?? [], searchTarget);
 
+    // 주석: 하이라이트된 절이 속한 장 통합주석의 pericope 헤딩으로 딥링크
+    const commentary = this.data.findCommentary(
+      verse.linkTarget.match(/^[가-힣]+/)?.[0] ?? "",
+      verse.chapter,
+      verse.verse,
+      this.plugin.settings.commentaryPath,
+    );
+    if (commentary) {
+      const row = this.contextEl.createDiv({ cls: "bible-verse-context-row" });
+      row.createSpan({ cls: "bible-verse-context-label", text: "주석" });
+      const btn = row.createEl("button", { cls: "bible-verse-chip is-note" });
+      btn.setText(commentary.label);
+      btn.tabIndex = -1;
+      const linktext = commentary.heading
+        ? `${commentary.path}#${commentary.heading}`
+        : commentary.path;
+      this.registerHover(btn, linktext);
+      btn.addEventListener("click", () => {
+        void this.app.workspace.openLinkText(linktext, "", true);
+        this.close();
+      });
+    }
+
     if (this.citing.length > 0) {
       const row = this.contextEl.createDiv({ cls: "bible-verse-context-row" });
       row.createSpan({ cls: "bible-verse-context-label", text: "인용한 설교" });
@@ -303,6 +371,7 @@ export class VerseInsertModal extends Modal {
         btn.setText(path.split("/").pop()?.replace(/\.md$/, "") ?? path);
         btn.title = path;
         btn.tabIndex = -1;
+        this.registerHover(btn, path);
         btn.addEventListener("click", () => {
           void this.app.workspace.openLinkText(path, "", true);
           this.close();
@@ -325,9 +394,9 @@ export class VerseInsertModal extends Modal {
 
   // ── 상태 조작 ─────────────────────────────────────────
 
-  private toggleVerse(verse: number) {
-    if (this.selected.has(verse)) this.selected.delete(verse);
-    else this.selected.add(verse);
+  private toggleVerse(linkTarget: string) {
+    if (this.selected.has(linkTarget)) this.selected.delete(linkTarget);
+    else this.selected.add(linkTarget);
     this.renderList();
     this.renderContext();
   }
@@ -372,7 +441,7 @@ export class VerseInsertModal extends Modal {
     if (e.key === " ") {
       e.preventDefault();
       const verse = this.loaded?.verses[this.highlight];
-      if (verse && verse.texts[this.version]) this.toggleVerse(verse.verse);
+      if (verse && verse.texts[this.version]) this.toggleVerse(verse.linkTarget);
       return;
     }
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "a") {
@@ -389,9 +458,9 @@ export class VerseInsertModal extends Modal {
   private toggleAll() {
     if (!this.loaded) return;
     const insertable = this.loaded.verses.filter((v) => v.texts[this.version]);
-    const allSelected = insertable.every((v) => this.selected.has(v.verse));
+    const allSelected = insertable.every((v) => this.selected.has(v.linkTarget));
     if (allSelected) this.selected.clear();
-    else this.selected = new Set(insertable.map((v) => v.verse));
+    else this.selected = new Set(insertable.map((v) => v.linkTarget));
     this.renderList();
   }
 
@@ -400,7 +469,7 @@ export class VerseInsertModal extends Modal {
   private insertableVerses() {
     if (!this.loaded) return [];
     return this.loaded.verses.filter(
-      (v) => this.selected.has(v.verse) && v.texts[this.version],
+      (v) => this.selected.has(v.linkTarget) && v.texts[this.version],
     );
   }
 
@@ -417,6 +486,7 @@ export class VerseInsertModal extends Modal {
       bookName: this.ref.bookName,
       chapter: this.ref.chapter,
       version: this.version,
+      secondaryVersion: this.secondary ?? undefined,
       wholeChapter,
       merge: this.plugin.settings.mergeRange,
     });
@@ -438,6 +508,7 @@ export class VerseInsertModal extends Modal {
       bookName: this.ref.bookName,
       chapter: this.ref.chapter,
       version: this.version,
+      secondaryVersion: this.secondary ?? undefined,
       wholeChapter,
       merge: true,
     });
@@ -459,11 +530,12 @@ export class VerseInsertModal extends Modal {
       bookName: this.ref.bookName,
       chapter: this.ref.chapter,
       version: this.version,
+      secondaryVersion: this.secondary ?? undefined,
       wholeChapter: false,
       merge: true,
     });
     if (!insertBlock(this.app, block, this.editor)) return;
-    new Notice(`${this.ref.bookName} ${this.ref.chapter}:${verse.verse} 삽입됨 (${this.version})`);
+    new Notice(`${this.ref.bookName} ${verse.chapter}:${verse.verse} 삽입됨 (${this.version})`);
     this.focusInput();
   }
 }

@@ -9,7 +9,10 @@ export interface BibleReference {
   bookName: string;
   chapter: number;
   verseStart?: number;
+  /** chapterEnd가 있으면 그 장의 절 번호, 없으면 chapter의 절 번호 */
   verseEnd?: number;
+  /** 장 경계를 넘는 범위(요3:36-4:2)의 끝 장 */
+  chapterEnd?: number;
 }
 
 export type ParseResult =
@@ -18,6 +21,8 @@ export type ParseResult =
 
 /** 볼트에서 읽어온 한 절의 데이터 */
 export interface VerseData {
+  /** 이 절이 속한 장 — 장 경계 범위 표시용 */
+  chapter: number;
   verse: number;
   /** 노트 파일명(확장자 제외) — wikilink 대상 (예: "요3_16") */
   linkTarget: string;

@@ -30,6 +30,11 @@ export default class BibleVersePlugin extends Plugin {
     });
 
     this.registerEditorSuggest(new BibleVerseSuggest(this));
+
+    this.registerHoverLinkSource("a4p-bible-verse", {
+      display: "A4P 성경구절",
+      defaultMod: true,
+    });
   }
 
   onunload() {}

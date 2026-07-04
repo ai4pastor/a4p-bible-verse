@@ -3,6 +3,7 @@ import { formatPlainVerses, formatVerses, verseRuns } from "../src/formatter";
 import { VerseData } from "../src/types";
 
 const verse = (n: number, text: string): VerseData => ({
+  chapter: 3,
   verse: n,
   linkTarget: `요3_${n}`,
   texts: { 새번역: text, 개역개정: `개역 ${n}` },
@@ -61,6 +62,7 @@ describe("formatVerses — 범위 병합", () => {
   });
   it("장 전체는 편/장 표기", () => {
     const psalm = (n: number): VerseData => ({
+      chapter: 23,
       verse: n,
       linkTarget: `시23_${n}`,
       texts: { 새번역: `본문 ${n}` },
@@ -77,6 +79,7 @@ describe("formatVerses — 범위 병합", () => {
 
 describe("formatVerses — 병렬 역본 (secondaryVersion)", () => {
   const dual = (n: number, ko: string, en: string): VerseData => ({
+    chapter: 3,
     verse: n,
     linkTarget: `요3_${n}`,
     texts: { 새번역: ko, NIV: en },
@@ -107,7 +110,7 @@ describe("formatVerses — 병렬 역본 (secondaryVersion)", () => {
   });
 
   it("병렬 역본 본문이 없는 절은 그 절만 이탤릭 생략", () => {
-    const noEn: VerseData = { verse: 17, linkTarget: "요3_17", texts: { 새번역: "한글만" } };
+    const noEn: VerseData = { chapter: 3, verse: 17, linkTarget: "요3_17", texts: { 새번역: "한글만" } };
     const out = formatVerses([dual(16, "하나님이", "For God"), noEn], dualOpts);
     expect(out).toContain("> [[요3_16|16]] 하나님이\n> _For God_\n");
     expect(out).toContain("> [[요3_17|17]] 한글만\n");
@@ -144,6 +147,7 @@ describe("formatPlainVerses — 클립보드 복사용", () => {
 
   it("장 전체는 편/장 표기", () => {
     const psalm = (n: number): VerseData => ({
+      chapter: 23,
       verse: n,
       linkTarget: `시23_${n}`,
       texts: { 새번역: `본문 ${n}` },
@@ -159,12 +163,40 @@ describe("formatPlainVerses — 클립보드 복사용", () => {
 
   it("병렬 역본은 이탤릭 마커 없이 다음 줄", () => {
     const dual: VerseData = {
+      chapter: 3,
       verse: 16,
       linkTarget: "요3_16",
       texts: { 새번역: "한글", NIV: "English" },
     };
     const out = formatPlainVerses([dual], { ...baseOpts, secondaryVersion: "NIV" });
     expect(out).toBe("요한복음 3:16 (새번역 · NIV)\n한글\nEnglish\n");
+  });
+});
+
+describe("formatVerses — 장 경계 범위", () => {
+  const cross = (ch: number, v: number, text: string): VerseData => ({
+    chapter: ch,
+    verse: v,
+    linkTarget: `요${ch}_${v}`,
+    texts: { 새번역: text },
+  });
+
+  it("헤더는 장:절-장:절, 절 번호는 장:절 표기", () => {
+    const out = formatVerses(
+      [cross(3, 36, "가"), cross(4, 1, "나"), cross(4, 2, "다")],
+      baseOpts,
+    );
+    expect(out).toBe(
+      "> [!quote] [[요3_36|요한복음 3:36-4:2]] (새번역)\n" +
+        "> [[요3_36|3:36]] 가\n" +
+        "> [[요4_1|4:1]] 나\n" +
+        "> [[요4_2|4:2]] 다\n",
+    );
+  });
+
+  it("플레인 복사도 장:절 표기", () => {
+    const out = formatPlainVerses([cross(3, 36, "가"), cross(4, 1, "나")], baseOpts);
+    expect(out).toBe("요한복음 3:36-4:1 (새번역)\n3:36 가\n4:1 나\n");
   });
 });
 

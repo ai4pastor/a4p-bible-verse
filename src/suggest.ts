@@ -105,7 +105,10 @@ export class BibleVerseSuggest extends EditorSuggest<VerseSuggestion> {
     const ref = this.ref;
     if (!ctx || !ref) return;
 
-    const outcome = await this.plugin.bibleData.loadVerses(ref);
+    const outcome = await this.plugin.bibleData.loadVerses(
+      ref,
+      this.plugin.settings.stripAnnotations,
+    );
     if (!outcome.ok) {
       new Notice(outcome.reason);
       return;

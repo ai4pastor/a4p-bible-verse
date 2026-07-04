@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { extractVerseTexts } from "../src/note-parser";
+import { extractVerseTexts, stripAnnotations } from "../src/note-parser";
 
 const fixture = (name: string) =>
   readFileSync(join(__dirname, "fixtures", name), "utf-8");
@@ -31,6 +31,31 @@ describe("extractVerseTexts — 실제 볼트 노트", () => {
       expect(text).not.toContain("##");
       expect(text).not.toContain("관련구절");
     }
+  });
+});
+
+describe("stripAnnotations — 각주·소제목 정리", () => {
+  it("소제목 <...> 제거", () => {
+    expect(stripAnnotations("<다윗의 노래> 주는 나의 목자시니")).toBe("주는 나의 목자시니");
+  });
+  it("각주 마커 a) 제거", () => {
+    expect(stripAnnotations("영생을 얻게 하려는 것이다. g) 본문")).toBe(
+      "영생을 얻게 하려는 것이다. 본문",
+    );
+  });
+  it("각주 본문 (a. ...) 제거", () => {
+    expect(stripAnnotations("끝이다. (g. 해석자에 따라 15절에서 인용을 끝내기도 함)")).toBe(
+      "끝이다.",
+    );
+  });
+  it("일반 영문 본문은 훼손하지 않음", () => {
+    const kjv = "For God so loved the world, that he gave his only begotten Son";
+    expect(stripAnnotations(kjv)).toBe(kjv);
+  });
+  it("복합 케이스", () => {
+    expect(stripAnnotations("<천지창조> a) 태초에 (a. 또는 창조하실 때에) 하나님이")).toBe(
+      "태초에 하나님이",
+    );
   });
 });
 
