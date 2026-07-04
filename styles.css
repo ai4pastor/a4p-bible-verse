@@ -99,6 +99,60 @@
   font-size: var(--font-ui-small);
 }
 
+.bible-verse-context {
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.bible-verse-context:empty {
+  border-top: none;
+}
+
+.bible-verse-context-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: var(--size-4-1) var(--size-4-2);
+}
+
+.bible-verse-context-label {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  flex-shrink: 0;
+  margin-right: 4px;
+}
+
+.bible-verse-chip {
+  font-size: var(--font-ui-smaller);
+  padding: 1px 8px;
+  border-radius: var(--radius-l);
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  box-shadow: none;
+  cursor: pointer;
+  height: auto;
+}
+
+.bible-verse-chip:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.bible-verse-chip.is-note {
+  color: var(--text-accent);
+}
+
+.bible-verse-context-more {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+}
+
+.bible-verse-btn-group {
+  display: flex;
+  gap: var(--size-4-2);
+  flex-shrink: 0;
+}
+
 .bible-verse-footer {
   display: flex;
   align-items: center;

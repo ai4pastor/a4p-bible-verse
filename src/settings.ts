@@ -14,6 +14,8 @@ export interface BibleVerseSettings {
   parallelTrigger: string;
   /** 병렬 삽입에 쓸 역본 쌍 [주 역본, 병렬 역본] */
   parallelVersions: [Version, Version];
+  /** "인용한 설교"를 찾을 폴더 — 비우면 성경 폴더 제외 전체 볼트 */
+  sermonFolder: string;
 }
 
 export const DEFAULT_SETTINGS: BibleVerseSettings = {
@@ -24,6 +26,7 @@ export const DEFAULT_SETTINGS: BibleVerseSettings = {
   suggestTrigger: ";;",
   parallelTrigger: ";;;",
   parallelVersions: ["새번역", "NIV"],
+  sermonFolder: "300. Sermons",
 };
 
 export class BibleVerseSettingTab extends PluginSettingTab {
@@ -107,6 +110,21 @@ export class BibleVerseSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.suggestTrigger)
           .onChange(async (value) => {
             this.plugin.settings.suggestTrigger = value || DEFAULT_SETTINGS.suggestTrigger;
+            await this.plugin.persist();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("설교 폴더 경로")
+      .setDesc(
+        "검색한 구절을 인용한 설교를 이 폴더에서 찾아 모달에 보여줍니다. 비우면 성경 폴더를 제외한 전체 볼트에서 찾습니다.",
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder(DEFAULT_SETTINGS.sermonFolder)
+          .setValue(this.plugin.settings.sermonFolder)
+          .onChange(async (value) => {
+            this.plugin.settings.sermonFolder = value.trim();
             await this.plugin.persist();
           }),
       );

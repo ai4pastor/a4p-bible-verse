@@ -61,6 +61,22 @@ function singleCallout(verse: VerseData, opts: FormatOptions): string {
 }
 
 /**
+ * 클립보드 복사용 플레인 텍스트 — 콜아웃·wikilink 없이 주보/PPT에 바로 붙여넣는 용도.
+ * 단일 절은 절 번호 생략.
+ */
+export function formatPlainVerses(verses: VerseData[], opts: FormatOptions): string {
+  if (verses.length === 0) return "";
+  const lines = [`${headerLabel(opts, verses.map((v) => v.verse))} (${versionLabel(opts)})`];
+  for (const v of verses) {
+    const prefix = verses.length > 1 ? `${v.verse} ` : "";
+    lines.push(`${prefix}${oneLine(v.texts[opts.version] ?? "")}`);
+    const secondary = opts.secondaryVersion && v.texts[opts.secondaryVersion];
+    if (secondary) lines.push(oneLine(secondary));
+  }
+  return lines.join("\n") + "\n";
+}
+
+/**
  * 선택된 절들을 삽입용 콜아웃 문자열로 만든다.
  * 호출자는 선택 역본의 본문이 있는 절만 넘겨야 한다.
  */

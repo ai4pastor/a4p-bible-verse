@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { parseReference, formatReference } from "../src/reference-parser";
+import {
+  formatReference,
+  parseLinkTarget,
+  parseReference,
+} from "../src/reference-parser";
 
 function ok(input: string) {
   const r = parseReference(input);
@@ -145,6 +149,29 @@ describe("오류 처리", () => {
   });
   it("0절", () => {
     fail("요3:0");
+  });
+});
+
+describe("parseLinkTarget — 구절 노트 파일명 파싱", () => {
+  it("롬5_8 → 로마서 5:8", () => {
+    expect(parseLinkTarget("롬5_8")).toMatchObject({
+      abbrev: "롬",
+      bookName: "로마서",
+      chapter: 5,
+      verseStart: 8,
+      verseEnd: 8,
+    });
+  });
+  it("요일4_9 → 요한1서 (두 글자 약자)", () => {
+    expect(parseLinkTarget("요일4_9")).toMatchObject({ abbrev: "요일", chapter: 4, verseStart: 9 });
+  });
+  it("파일명 형식이 아니면 null", () => {
+    expect(parseLinkTarget("요3:16")).toBeNull();
+    expect(parseLinkTarget("🔖창조")).toBeNull();
+    expect(parseLinkTarget("설교노트")).toBeNull();
+  });
+  it("없는 약자면 null", () => {
+    expect(parseLinkTarget("욮3_16")).toBeNull();
   });
 });
 

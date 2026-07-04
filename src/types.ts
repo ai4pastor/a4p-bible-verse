@@ -21,6 +21,12 @@ export interface VerseData {
   verse: number;
   /** 노트 파일명(확장자 제외) — wikilink 대상 (예: "요3_16") */
   linkTarget: string;
+  /** 볼트 내 전체 경로 (백링크 대조용) */
+  path?: string;
   /** 역본별 본문. 노트에 해당 역본 콜아웃이 없으면 undefined */
   texts: Partial<Record<Version, string>>;
+  /** frontmatter 관련구절의 링크 대상들 (예: ["롬5_8", "요일4_9"]) */
+  related?: string[];
+  /** frontmatter 평행본문의 링크 대상들 */
+  parallel?: string[];
 }

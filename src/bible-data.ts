@@ -11,6 +11,15 @@ export interface LoadResult {
 
 export type LoadOutcome = { ok: true; result: LoadResult } | { ok: false; reason: string };
 
+/** frontmatter 값("[[롬5_8]]" 문자열 리스트)에서 링크 대상만 추출 */
+function extractRefLinks(value: unknown): string[] {
+  const arr = Array.isArray(value) ? value : typeof value === "string" ? [value] : [];
+  return arr
+    .filter((x): x is string => typeof x === "string")
+    .map((s) => s.match(/\[\[([^\]|]+)/)?.[1]?.trim() ?? "")
+    .filter(Boolean);
+}
+
 /**
  * 볼트의 성경 구절 노트 접근 계층.
  * 인덱스 없이 파일명 규칙으로 O(1) 조회하고, 폴더 매핑·장 절 목록만 캐시한다.
@@ -191,10 +200,44 @@ export class BibleData {
         const file = this.app.vault.getAbstractFileByPath(`${folder.path}/${linkTarget}.md`);
         if (!(file instanceof TFile)) return { verse: v, linkTarget, texts: {} };
         const content = await this.app.vault.cachedRead(file);
-        return { verse: v, linkTarget, texts: extractVerseTexts(content) };
+        const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+        return {
+          verse: v,
+          linkTarget,
+          path: file.path,
+          texts: extractVerseTexts(content),
+          related: extractRefLinks(fm?.["관련구절"]),
+          parallel: extractRefLinks(fm?.["평행본문"]),
+        };
       }),
     );
 
     return { ok: true, result: { verses, notice } };
+  }
+
+  /**
+   * 주어진 구절 노트들을 인용(링크)한 노트 경로 목록.
+   * sermonFolder가 있으면 그 폴더 안에서만, 없으면 성경 폴더 제외 전체에서 찾는다.
+   * 날짜 접두 파일명이 최신순이 되도록 경로 내림차순 정렬.
+   */
+  citingNotes(versePaths: string[], sermonFolder: string): string[] {
+    const targets = versePaths.filter(Boolean);
+    if (targets.length === 0) return [];
+    const biblePrefix = this.getBiblePath().replace(/\/+$/, "") + "/";
+    const folderPrefix = sermonFolder.trim().replace(/\/+$/, "");
+    const links = this.app.metadataCache.resolvedLinks;
+    const results: string[] = [];
+    for (const source in links) {
+      if (source.startsWith(biblePrefix)) continue;
+      if (folderPrefix && !source.startsWith(folderPrefix + "/")) continue;
+      const linkedTargets = links[source];
+      for (const p of targets) {
+        if (linkedTargets[p]) {
+          results.push(source);
+          break;
+        }
+      }
+    }
+    return results.sort().reverse();
   }
 }

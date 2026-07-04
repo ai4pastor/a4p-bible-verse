@@ -1,5 +1,5 @@
-import { BOOK_TOKENS, BOOKS } from "./books";
-import { ParseResult } from "./types";
+import { BOOK_BY_ABBREV, BOOK_TOKENS, BOOKS } from "./books";
+import { BibleReference, ParseResult } from "./types";
 
 /** 장·절 부분 문법: "3" / "3장" / "23편" / "3:16" / "3_16" / "3장 16절" / "3:16-20" */
 const CHAPTER_VERSE_RE =
@@ -82,6 +82,22 @@ function suggestBook(query: string): string | undefined {
     (b) => b.name.startsWith(head[0]) || b.abbrev.startsWith(head[0]),
   );
   return hit?.name;
+}
+
+/** 구절 노트 파일명("롬5_8")을 참조로 변환. 관련구절 칩 표시용. */
+export function parseLinkTarget(target: string): BibleReference | null {
+  const m = target.trim().match(/^([가-힣]+)(\d+)_(\d+)$/);
+  if (!m) return null;
+  const book = BOOK_BY_ABBREV.get(m[1]);
+  if (!book) return null;
+  const verse = parseInt(m[3], 10);
+  return {
+    abbrev: book.abbrev,
+    bookName: book.name,
+    chapter: parseInt(m[2], 10),
+    verseStart: verse,
+    verseEnd: verse,
+  };
 }
 
 /** 표시용 정규화 문자열: "요한복음 3:16-20" / "시편 23편" */

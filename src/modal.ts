@@ -1,8 +1,8 @@
 import { App, Editor, Modal, Notice } from "obsidian";
 import { BibleData, LoadResult } from "./bible-data";
-import { formatVerses } from "./formatter";
+import { formatPlainVerses, formatVerses } from "./formatter";
 import type BibleVersePlugin from "./main";
-import { formatReference, parseReference } from "./reference-parser";
+import { formatReference, parseLinkTarget, parseReference } from "./reference-parser";
 import { insertBlock } from "./insert";
 import { BibleReference, VERSIONS, Version } from "./types";
 
@@ -20,7 +20,9 @@ export class VerseInsertModal extends Modal {
   private statusEl!: HTMLElement;
   private versionBarEl!: HTMLElement;
   private listEl!: HTMLElement;
+  private contextEl!: HTMLElement;
   private insertBtnEl!: HTMLButtonElement;
+  private citing: string[] = [];
 
   private version: Version;
   private ref: BibleReference | null = null;
@@ -63,13 +65,19 @@ export class VerseInsertModal extends Modal {
     this.listEl.tabIndex = -1;
     this.listEl.addEventListener("keydown", (e) => this.onListKeydown(e));
 
+    // 컨텍스트: 관련구절 칩 + 인용한 설교
+    this.contextEl = contentEl.createDiv({ cls: "bible-verse-context" });
+
     // 푸터
     const footer = contentEl.createDiv({ cls: "bible-verse-footer" });
     footer.createDiv({
       cls: "bible-verse-hints",
-      text: "Enter 삽입 · ↓ 목록 · Space 선택 · Cmd+Enter 한 절 삽입(유지) · Tab 역본",
+      text: "Enter 삽입 · ↓ 목록 · Space 선택 · Cmd+Enter 한 절(유지) · Tab 역본 · Cmd+Shift+C 복사",
     });
-    this.insertBtnEl = footer.createEl("button", {
+    const btnGroup = footer.createDiv({ cls: "bible-verse-btn-group" });
+    const copyBtn = btnGroup.createEl("button", { text: "복사" });
+    copyBtn.addEventListener("click", () => void this.copySelected());
+    this.insertBtnEl = btnGroup.createEl("button", {
       cls: "mod-cta bible-verse-insert-btn",
       text: "삽입",
     });
@@ -91,6 +99,10 @@ export class VerseInsertModal extends Modal {
     this.scope.register(["Shift"], "Tab", (e) => {
       e.preventDefault();
       this.cycleVersion(-1);
+    });
+    this.scope.register(["Mod", "Shift"], "C", (e) => {
+      e.preventDefault();
+      void this.copySelected();
     });
     this.scope.register([], "ArrowDown", (e) => {
       e.preventDefault();
@@ -147,6 +159,7 @@ export class VerseInsertModal extends Modal {
       this.loaded = null;
       this.setStatus(parsed.reason, "error");
       this.listEl.empty();
+      this.contextEl.empty();
       this.updateInsertButton();
       return;
     }
@@ -164,6 +177,7 @@ export class VerseInsertModal extends Modal {
       this.loaded = null;
       this.setStatus(outcome.reason, "error");
       this.listEl.empty();
+      this.contextEl.empty();
       this.updateInsertButton();
       return;
     }
@@ -172,12 +186,17 @@ export class VerseInsertModal extends Modal {
     this.loaded = outcome.result;
     this.selected = new Set(outcome.result.verses.map((v) => v.verse));
     this.highlight = -1;
+    this.citing = this.data.citingNotes(
+      outcome.result.verses.map((v) => v.path ?? ""),
+      this.plugin.settings.sermonFolder,
+    );
 
     const label = formatReference(parsed.ref);
     const count = outcome.result.verses.length;
     const notice = outcome.result.notice ? ` — ${outcome.result.notice}` : "";
     this.setStatus(`${label} (${count}절)${notice}`, outcome.result.notice ? "warn" : "ok");
     this.renderList();
+    this.renderContext();
   }
 
   // ── 렌더링 ────────────────────────────────────────────
@@ -185,6 +204,7 @@ export class VerseInsertModal extends Modal {
   private renderEmptyState() {
     this.setStatus("장절 참조를 입력하세요 (예: 요3:16, 시23편)", "muted");
     this.listEl.empty();
+    this.contextEl.empty();
     this.updateInsertButton();
   }
 
@@ -242,6 +262,61 @@ export class VerseInsertModal extends Modal {
     this.updateInsertButton();
   }
 
+  /** 하이라이트된 절(없으면 첫 절)의 관련구절·평행본문 칩 + 인용한 설교 줄 */
+  private renderContext() {
+    this.contextEl.empty();
+    if (!this.loaded || this.loaded.verses.length === 0) return;
+
+    const verse = this.loaded.verses[Math.max(this.highlight, 0)] ?? this.loaded.verses[0];
+
+    const chipRow = (label: string, targets: string[], onClick: (t: string) => void) => {
+      if (targets.length === 0) return;
+      const row = this.contextEl.createDiv({ cls: "bible-verse-context-row" });
+      row.createSpan({ cls: "bible-verse-context-label", text: label });
+      for (const target of targets) {
+        const btn = row.createEl("button", { cls: "bible-verse-chip" });
+        const ref = parseLinkTarget(target);
+        btn.setText(ref ? formatReference(ref) : target);
+        btn.tabIndex = -1;
+        btn.addEventListener("click", () => onClick(target));
+      }
+    };
+
+    const searchTarget = (target: string) => {
+      const ref = parseLinkTarget(target);
+      this.inputEl.value = ref
+        ? `${ref.abbrev}${ref.chapter}:${ref.verseStart}`
+        : target;
+      void this.runSearch();
+      this.inputEl.focus();
+    };
+
+    chipRow("관련구절", verse.related ?? [], searchTarget);
+    chipRow("평행본문", verse.parallel ?? [], searchTarget);
+
+    if (this.citing.length > 0) {
+      const row = this.contextEl.createDiv({ cls: "bible-verse-context-row" });
+      row.createSpan({ cls: "bible-verse-context-label", text: "인용한 설교" });
+      const shown = this.citing.slice(0, 5);
+      for (const path of shown) {
+        const btn = row.createEl("button", { cls: "bible-verse-chip is-note" });
+        btn.setText(path.split("/").pop()?.replace(/\.md$/, "") ?? path);
+        btn.title = path;
+        btn.tabIndex = -1;
+        btn.addEventListener("click", () => {
+          void this.app.workspace.openLinkText(path, "", true);
+          this.close();
+        });
+      }
+      if (this.citing.length > shown.length) {
+        row.createSpan({
+          cls: "bible-verse-context-more",
+          text: `외 ${this.citing.length - shown.length}개`,
+        });
+      }
+    }
+  }
+
   private updateInsertButton() {
     const count = this.insertableVerses().length;
     this.insertBtnEl.setText(count > 0 ? `${count}절 삽입` : "삽입");
@@ -254,6 +329,7 @@ export class VerseInsertModal extends Modal {
     if (this.selected.has(verse)) this.selected.delete(verse);
     else this.selected.add(verse);
     this.renderList();
+    this.renderContext();
   }
 
   private setVersion(v: Version) {
@@ -280,6 +356,7 @@ export class VerseInsertModal extends Modal {
     this.highlight = Math.min(next, count - 1);
     this.listEl.focus();
     this.renderList();
+    this.renderContext();
     const row = this.listEl.children[this.highlight];
     if (row instanceof HTMLElement) row.scrollIntoView({ block: "nearest" });
   }
@@ -345,6 +422,27 @@ export class VerseInsertModal extends Modal {
     });
     if (!insertBlock(this.app, block, this.editor)) return;
     if (close) this.close();
+  }
+
+  /** Cmd+Shift+C: 선택된 절을 플레인 텍스트(콜아웃·wikilink 없음)로 클립보드 복사 */
+  private async copySelected() {
+    if (!this.ref || !this.loaded) return;
+    const verses = this.insertableVerses();
+    if (verses.length === 0) {
+      new Notice("복사할 절이 없습니다.");
+      return;
+    }
+    const wholeChapter =
+      this.ref.verseStart === undefined && verses.length === this.loaded.verses.length;
+    const text = formatPlainVerses(verses, {
+      bookName: this.ref.bookName,
+      chapter: this.ref.chapter,
+      version: this.version,
+      wholeChapter,
+      merge: true,
+    });
+    await navigator.clipboard.writeText(text);
+    new Notice("클립보드에 복사됨 (플레인 텍스트)");
   }
 
   /** Cmd+Enter: 하이라이트된 절(기본 첫 절) 1개만 삽입하고 모달 유지 — 연속 삽입 모드 */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatVerses, verseRuns } from "../src/formatter";
+import { formatPlainVerses, formatVerses, verseRuns } from "../src/formatter";
 import { VerseData } from "../src/types";
 
 const verse = (n: number, text: string): VerseData => ({
@@ -123,6 +123,48 @@ describe("formatVerses — 병렬 역본 (secondaryVersion)", () => {
     const out = formatVerses([verse(16, "본문")], baseOpts);
     expect(out).not.toContain("·");
     expect(out).not.toMatch(/^> _.*_$/m);
+  });
+});
+
+describe("formatPlainVerses — 클립보드 복사용", () => {
+  it("단일 절: 헤더 + 본문, 절 번호 없음, wikilink 없음", () => {
+    const out = formatPlainVerses([verse(16, "하나님이 세상을")], baseOpts);
+    expect(out).toBe("요한복음 3:16 (새번역)\n하나님이 세상을\n");
+    expect(out).not.toContain("[[");
+    expect(out).not.toContain(">");
+  });
+
+  it("범위: 절 번호 접두 + 여러 줄 본문 한 줄화", () => {
+    const out = formatPlainVerses(
+      [verse(16, "첫 줄\n둘째 줄"), verse(17, "나")],
+      baseOpts,
+    );
+    expect(out).toBe("요한복음 3:16-17 (새번역)\n16 첫 줄 둘째 줄\n17 나\n");
+  });
+
+  it("장 전체는 편/장 표기", () => {
+    const psalm = (n: number): VerseData => ({
+      verse: n,
+      linkTarget: `시23_${n}`,
+      texts: { 새번역: `본문 ${n}` },
+    });
+    const out = formatPlainVerses([psalm(1), psalm(2)], {
+      ...baseOpts,
+      bookName: "시편",
+      chapter: 23,
+      wholeChapter: true,
+    });
+    expect(out.startsWith("시편 23편 (새번역)\n")).toBe(true);
+  });
+
+  it("병렬 역본은 이탤릭 마커 없이 다음 줄", () => {
+    const dual: VerseData = {
+      verse: 16,
+      linkTarget: "요3_16",
+      texts: { 새번역: "한글", NIV: "English" },
+    };
+    const out = formatPlainVerses([dual], { ...baseOpts, secondaryVersion: "NIV" });
+    expect(out).toBe("요한복음 3:16 (새번역 · NIV)\n한글\nEnglish\n");
   });
 });
 
