@@ -1,7 +1,8 @@
-import { App, Editor, Modal, Notice } from "obsidian";
+import { App, Component, Editor, MarkdownRenderer, Modal, Notice, TFile } from "obsidian";
 import { BibleData, LoadResult } from "./bible-data";
 import { formatPlainVerses, formatVerses } from "./formatter";
 import type BibleVersePlugin from "./main";
+import { extractHeadingSection } from "./note-parser";
 import { formatReference, parseLinkTarget, parseReference } from "./reference-parser";
 import { insertBlock } from "./insert";
 import { BibleReference, VERSIONS, Version } from "./types";
@@ -21,8 +22,12 @@ export class VerseInsertModal extends Modal {
   private versionBarEl!: HTMLElement;
   private listEl!: HTMLElement;
   private contextEl!: HTMLElement;
+  private previewEl!: HTMLElement;
   private insertBtnEl!: HTMLButtonElement;
   private citing: string[] = [];
+  /** 미리보기 렌더링 생명주기 관리 (모달 닫힐 때 unload) */
+  private previewComponent = new Component();
+  private previewOpen = false;
 
   private version: Version;
   /** Cmd+클릭으로 고른 병렬 역본 (null이면 단일 역본 삽입) */
@@ -62,13 +67,21 @@ export class VerseInsertModal extends Modal {
     this.versionBarEl = statusRow.createDiv({ cls: "bible-verse-versions" });
     this.renderVersionBar();
 
+    // 본문 영역: 좌측(목록+컨텍스트) / 우측(미리보기 패널)
+    const bodyEl = contentEl.createDiv({ cls: "bible-verse-body" });
+    const mainEl = bodyEl.createDiv({ cls: "bible-verse-main" });
+
     // 구절 목록
-    this.listEl = contentEl.createDiv({ cls: "bible-verse-list" });
+    this.listEl = mainEl.createDiv({ cls: "bible-verse-list" });
     this.listEl.tabIndex = -1;
     this.listEl.addEventListener("keydown", (e) => this.onListKeydown(e));
 
     // 컨텍스트: 관련구절 칩 + 인용한 설교
-    this.contextEl = contentEl.createDiv({ cls: "bible-verse-context" });
+    this.contextEl = mainEl.createDiv({ cls: "bible-verse-context" });
+
+    // 미리보기 패널 (칩 클릭 시 열림)
+    this.previewEl = bodyEl.createDiv({ cls: "bible-verse-preview" });
+    this.previewComponent.load();
 
     // 푸터
     const footer = contentEl.createDiv({ cls: "bible-verse-footer" });
@@ -115,7 +128,10 @@ export class VerseInsertModal extends Modal {
       this.moveHighlight(-1);
     });
     this.scope.register([], "Escape", (e) => {
-      if (this.highlight >= 0) {
+      if (this.previewOpen) {
+        e.preventDefault();
+        this.closePreview();
+      } else if (this.highlight >= 0) {
         e.preventDefault();
         this.focusInput();
       } else {
@@ -134,6 +150,7 @@ export class VerseInsertModal extends Modal {
 
   onClose() {
     if (this.debounceTimer !== null) window.clearTimeout(this.debounceTimer);
+    this.previewComponent.unload();
     this.contentEl.empty();
   }
 
@@ -147,6 +164,7 @@ export class VerseInsertModal extends Modal {
   private async runSearch() {
     const query = this.inputEl.value.trim();
     const id = ++this.requestId;
+    if (this.previewOpen) this.closePreview();
 
     if (!query) {
       this.ref = null;
@@ -292,6 +310,84 @@ export class VerseInsertModal extends Modal {
     this.updateInsertButton();
   }
 
+  // ── 인라인 미리보기 ────────────────────────────────────
+
+  /**
+   * 칩 클릭 시 모달 안 우측 패널에 노트 내용을 렌더링한다.
+   * [열기]로만 실제 이동하고, 미리보기 안의 위키링크 클릭은 연쇄 미리보기로 이어진다.
+   */
+  private async openPreview(opts: {
+    file: TFile;
+    title: string;
+    /** 있으면 해당 헤딩 섹션만 렌더 (주석 pericope) */
+    heading?: string;
+    /** 있으면 [검색] 버튼 노출 — 클릭 시 그 참조로 검색 전환 */
+    searchInput?: string;
+  }) {
+    const { file, title, heading, searchInput } = opts;
+    this.previewEl.empty();
+    this.previewEl.addClass("is-open");
+    this.modalEl.addClass("bible-verse-modal-expanded");
+    this.previewOpen = true;
+
+    const header = this.previewEl.createDiv({ cls: "bible-verse-preview-header" });
+    header.createSpan({ cls: "bible-verse-preview-title", text: title });
+    const actions = header.createDiv({ cls: "bible-verse-preview-actions" });
+    if (searchInput) {
+      const searchBtn = actions.createEl("button", { text: "검색" });
+      searchBtn.addEventListener("click", () => {
+        this.closePreview();
+        this.inputEl.value = searchInput;
+        void this.runSearch();
+        this.inputEl.focus();
+      });
+    }
+    const openBtn = actions.createEl("button", { text: "열기", cls: "mod-cta" });
+    openBtn.addEventListener("click", () => {
+      const linktext = heading ? `${file.path}#${heading}` : file.path;
+      void this.app.workspace.openLinkText(linktext, "", true);
+      this.close();
+    });
+    const closeBtn = actions.createEl("button", { text: "✕" });
+    closeBtn.addEventListener("click", () => this.closePreview());
+
+    let md = await this.app.vault.cachedRead(file);
+    if (md.startsWith("---")) {
+      const end = md.indexOf("\n---", 3);
+      if (end !== -1) md = md.slice(end + 4);
+    }
+    if (heading) md = extractHeadingSection(md, heading);
+
+    const body = this.previewEl.createDiv({ cls: "bible-verse-preview-body" });
+    await MarkdownRenderer.render(this.app, md, body, file.path, this.previewComponent);
+
+    // 미리보기 안의 위키링크 → 연쇄 미리보기 (모달을 떠나지 않음)
+    body.addEventListener("click", (e) => {
+      const anchor = (e.target as HTMLElement).closest("a.internal-link");
+      if (!anchor) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const href = anchor.getAttribute("data-href") ?? anchor.getAttribute("href");
+      if (!href) return;
+      const linkpath = href.split("#")[0];
+      const target = this.app.metadataCache.getFirstLinkpathDest(linkpath, file.path);
+      if (!target) return;
+      const ref = parseLinkTarget(target.basename);
+      void this.openPreview({
+        file: target,
+        title: ref ? formatReference(ref) : target.basename,
+        searchInput: ref ? `${ref.abbrev}${ref.chapter}:${ref.verseStart}` : undefined,
+      });
+    });
+  }
+
+  private closePreview() {
+    this.previewEl.empty();
+    this.previewEl.removeClass("is-open");
+    this.modalEl.removeClass("bible-verse-modal-expanded");
+    this.previewOpen = false;
+  }
+
   /** Cmd 호버 시 옵시디언 페이지 미리보기 (hover-editor 설치 시 그쪽으로 연동) */
   private registerHover(el: HTMLElement, linktext: string) {
     el.addEventListener("mouseover", (event) => {
@@ -327,17 +423,26 @@ export class VerseInsertModal extends Modal {
       }
     };
 
-    const searchTarget = (target: string) => {
+    // 칩 클릭 = 모달 안 미리보기. 실제 이동은 미리보기의 [열기], 검색 전환은 [검색] 버튼.
+    const previewTarget = (target: string) => {
       const ref = parseLinkTarget(target);
-      this.inputEl.value = ref
-        ? `${ref.abbrev}${ref.chapter}:${ref.verseStart}`
-        : target;
-      void this.runSearch();
-      this.inputEl.focus();
+      const file = this.app.metadataCache.getFirstLinkpathDest(target, "");
+      if (!file) {
+        // 노트가 없으면(비정규 링크) 검색 전환으로 폴백
+        this.inputEl.value = ref ? `${ref.abbrev}${ref.chapter}:${ref.verseStart}` : target;
+        void this.runSearch();
+        this.inputEl.focus();
+        return;
+      }
+      void this.openPreview({
+        file,
+        title: ref ? formatReference(ref) : file.basename,
+        searchInput: ref ? `${ref.abbrev}${ref.chapter}:${ref.verseStart}` : undefined,
+      });
     };
 
-    chipRow("관련구절", verse.related ?? [], searchTarget);
-    chipRow("평행본문", verse.parallel ?? [], searchTarget);
+    chipRow("관련구절", verse.related ?? [], previewTarget);
+    chipRow("평행본문", verse.parallel ?? [], previewTarget);
 
     // 주석: 하이라이트된 절이 속한 장 통합주석의 pericope 헤딩으로 딥링크
     const commentary = this.data.findCommentary(
@@ -357,8 +462,13 @@ export class VerseInsertModal extends Modal {
         : commentary.path;
       this.registerHover(btn, linktext);
       btn.addEventListener("click", () => {
-        void this.app.workspace.openLinkText(linktext, "", true);
-        this.close();
+        const file = this.app.vault.getAbstractFileByPath(commentary.path);
+        if (!(file instanceof TFile)) return;
+        void this.openPreview({
+          file,
+          title: commentary.label,
+          heading: commentary.heading,
+        });
       });
     }
 
@@ -373,8 +483,9 @@ export class VerseInsertModal extends Modal {
         btn.tabIndex = -1;
         this.registerHover(btn, path);
         btn.addEventListener("click", () => {
-          void this.app.workspace.openLinkText(path, "", true);
-          this.close();
+          const file = this.app.vault.getAbstractFileByPath(path);
+          if (!(file instanceof TFile)) return;
+          void this.openPreview({ file, title: file.basename });
         });
       }
       if (this.citing.length > shown.length) {

@@ -1,8 +1,12 @@
 /* A4P 성경구절 — 검색·삽입 모달 */
 
 .bible-verse-modal {
-  max-width: 620px;
-  width: 90vw;
+  max-width: 780px;
+  width: 92vw;
+}
+
+.bible-verse-modal.bible-verse-modal-expanded {
+  max-width: 1150px;
 }
 
 .bible-verse-input-wrap {
@@ -11,8 +15,21 @@
 
 .bible-verse-input {
   width: 100%;
-  font-size: var(--font-ui-medium);
-  padding: var(--size-4-2) var(--size-4-3);
+  font-size: var(--font-ui-large);
+  padding: var(--size-4-3) var(--size-4-3);
+}
+
+.bible-verse-body {
+  display: flex;
+  gap: var(--size-4-3);
+  min-height: 0;
+}
+
+.bible-verse-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .bible-verse-status-row {
@@ -63,10 +80,65 @@
 }
 
 .bible-verse-list {
-  max-height: 45vh;
+  max-height: 55vh;
   overflow-y: auto;
   border-top: 1px solid var(--background-modifier-border);
   outline: none;
+}
+
+/* 인라인 미리보기 패널 */
+.bible-verse-preview {
+  display: none;
+}
+
+.bible-verse-preview.is-open {
+  display: flex;
+  flex-direction: column;
+  width: 46%;
+  min-width: 320px;
+  max-height: 62vh;
+  border-left: 1px solid var(--background-modifier-border);
+  padding-left: var(--size-4-3);
+}
+
+.bible-verse-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--size-4-2);
+  padding-bottom: var(--size-4-2);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.bible-verse-preview-title {
+  font-weight: var(--font-semibold);
+  font-size: var(--font-ui-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bible-verse-preview-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.bible-verse-preview-actions button {
+  font-size: var(--font-ui-smaller);
+  padding: 2px 10px;
+  height: auto;
+}
+
+.bible-verse-preview-body {
+  overflow-y: auto;
+  padding-top: var(--size-4-2);
+  font-size: var(--font-ui-small);
+  user-select: text;
+}
+
+.bible-verse-preview-body .internal-link {
+  cursor: pointer;
 }
 
 .bible-verse-row {

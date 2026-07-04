@@ -19,6 +19,19 @@ export function stripAnnotations(text: string): string {
 }
 const BODY_HEADING_RE = /^##\s*📜\s*본문\s*$/m;
 
+/** 마크다운에서 특정 헤딩부터 같은 레벨 이하의 다음 헤딩 전까지 슬라이스 (미리보기용) */
+export function extractHeadingSection(md: string, heading: string): string {
+  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`^(#{1,6})\\s+${escaped}\\s*$`, "m");
+  const m = re.exec(md);
+  if (!m) return md;
+  const level = m[1].length;
+  const start = m.index;
+  const rest = md.slice(start + m[0].length);
+  const next = new RegExp(`^#{1,${level}}\\s`, "m").exec(rest);
+  return next ? md.slice(start, start + m[0].length + next.index) : md.slice(start);
+}
+
 /**
  * 구절 노트 본문에서 역본별 텍스트를 추출한다.
  * "## 📜 본문" 섹션 안의 `> [!quote] {역본}` 콜아웃만 대상으로 하며,

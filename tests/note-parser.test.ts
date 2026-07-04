@@ -1,7 +1,11 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { extractVerseTexts, stripAnnotations } from "../src/note-parser";
+import {
+  extractHeadingSection,
+  extractVerseTexts,
+  stripAnnotations,
+} from "../src/note-parser";
 
 const fixture = (name: string) =>
   readFileSync(join(__dirname, "fixtures", name), "utf-8");
@@ -56,6 +60,44 @@ describe("stripAnnotations — 각주·소제목 정리", () => {
     expect(stripAnnotations("<천지창조> a) 태초에 (a. 또는 창조하실 때에) 하나님이")).toBe(
       "태초에 하나님이",
     );
+  });
+});
+
+describe("extractHeadingSection — 미리보기용 섹션 슬라이스", () => {
+  const md = `# 제목
+
+## 3:1-8 - 니고데모
+내용 A
+### 소스별 핵심
+내용 A2
+
+## 3:14-17 - 하나님의 사랑
+내용 B
+
+## 3:18-21 - 빛과 어두움
+내용 C
+`;
+
+  it("헤딩부터 다음 같은 레벨 헤딩 전까지", () => {
+    const out = extractHeadingSection(md, "3:14-17 - 하나님의 사랑");
+    expect(out).toContain("내용 B");
+    expect(out).not.toContain("내용 A");
+    expect(out).not.toContain("내용 C");
+  });
+
+  it("하위 헤딩(###)은 섹션에 포함", () => {
+    const out = extractHeadingSection(md, "3:1-8 - 니고데모");
+    expect(out).toContain("내용 A2");
+    expect(out).not.toContain("내용 B");
+  });
+
+  it("마지막 섹션은 끝까지", () => {
+    const out = extractHeadingSection(md, "3:18-21 - 빛과 어두움");
+    expect(out).toContain("내용 C");
+  });
+
+  it("헤딩을 못 찾으면 전체 반환", () => {
+    expect(extractHeadingSection(md, "없는 헤딩")).toBe(md);
   });
 });
 

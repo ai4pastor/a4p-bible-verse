@@ -1,6 +1,6 @@
 {
   "name": "a4p-bible-verse",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "옵시디언 볼트의 성경 구절 노트를 검색해 인용 콜아웃 + wikilink로 삽입하는 플러그인",
   "main": "main.js",
   "scripts": {
