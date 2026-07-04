@@ -10,6 +10,10 @@ export interface BibleVerseSettings {
   mergeRange: boolean;
   enableSuggest: boolean;
   suggestTrigger: string;
+  /** 병렬 삽입 자동완성 트리거 (예: ;;;요3:16 → 두 역본 동시 삽입) */
+  parallelTrigger: string;
+  /** 병렬 삽입에 쓸 역본 쌍 [주 역본, 병렬 역본] */
+  parallelVersions: [Version, Version];
 }
 
 export const DEFAULT_SETTINGS: BibleVerseSettings = {
@@ -18,6 +22,8 @@ export const DEFAULT_SETTINGS: BibleVerseSettings = {
   mergeRange: true,
   enableSuggest: true,
   suggestTrigger: ";;",
+  parallelTrigger: ";;;",
+  parallelVersions: ["새번역", "NIV"],
 };
 
 export class BibleVerseSettingTab extends PluginSettingTab {
@@ -104,6 +110,49 @@ export class BibleVerseSettingTab extends PluginSettingTab {
             await this.plugin.persist();
           }),
       );
+
+    new Setting(containerEl).setName("병렬 삽입 (이중 역본)").setHeading();
+
+    new Setting(containerEl)
+      .setName("병렬 삽입 트리거")
+      .setDesc(
+        "이 트리거로 참조를 입력하면(예: ;;;요3:16) 아래 두 역본이 절마다 교차로 함께 삽입됩니다. 해외 이중 언어 설교용.",
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder(DEFAULT_SETTINGS.parallelTrigger)
+          .setValue(this.plugin.settings.parallelTrigger)
+          .onChange(async (value) => {
+            this.plugin.settings.parallelTrigger = value || DEFAULT_SETTINGS.parallelTrigger;
+            await this.plugin.persist();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("병렬 역본 — 주 역본")
+      .setDesc("본문으로 먼저 들어가는 역본입니다.")
+      .addDropdown((drop) => {
+        for (const v of VERSIONS) drop.addOption(v, v);
+        drop
+          .setValue(this.plugin.settings.parallelVersions[0])
+          .onChange(async (value) => {
+            this.plugin.settings.parallelVersions[0] = value as Version;
+            await this.plugin.persist();
+          });
+      });
+
+    new Setting(containerEl)
+      .setName("병렬 역본 — 병렬 역본")
+      .setDesc("각 절 아래 이탤릭으로 따라가는 역본입니다.")
+      .addDropdown((drop) => {
+        for (const v of VERSIONS) drop.addOption(v, v);
+        drop
+          .setValue(this.plugin.settings.parallelVersions[1])
+          .onChange(async (value) => {
+            this.plugin.settings.parallelVersions[1] = value as Version;
+            await this.plugin.persist();
+          });
+      });
   }
 
   private renderValidation(

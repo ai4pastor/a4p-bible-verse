@@ -4,6 +4,8 @@ export interface FormatOptions {
   bookName: string;
   chapter: number;
   version: Version;
+  /** 병렬 삽입 시 두 번째 역본 — 각 절의 본문 아래 이탤릭으로 따라감 */
+  secondaryVersion?: Version;
   /** 장 전체 요청 + 전체 선택이면 헤더를 "시편 23편" 형태로 */
   wholeChapter: boolean;
   /** true: 병합 콜아웃 1개, false: 절별 콜아웃 */
@@ -41,11 +43,20 @@ function headerLabel(opts: FormatOptions, nums: number[]): string {
   return `${opts.bookName} ${opts.chapter}:${verseRuns(nums)}`;
 }
 
+/** 헤더의 역본 표기: "새번역" 또는 병렬이면 "새번역 · NIV" */
+function versionLabel(opts: FormatOptions): string {
+  return opts.secondaryVersion
+    ? `${opts.version} · ${opts.secondaryVersion}`
+    : opts.version;
+}
+
 function singleCallout(verse: VerseData, opts: FormatOptions): string {
   const text = verse.texts[opts.version] ?? "";
   const label = `${opts.bookName} ${opts.chapter}:${verse.verse}`;
-  const lines = [`> [!quote] [[${verse.linkTarget}|${label}]] (${opts.version})`];
+  const lines = [`> [!quote] [[${verse.linkTarget}|${label}]] (${versionLabel(opts)})`];
   for (const t of text.split("\n")) lines.push(`> ${t}`);
+  const secondary = opts.secondaryVersion && verse.texts[opts.secondaryVersion];
+  if (secondary) lines.push(`> _${oneLine(secondary)}_`);
   return lines.join("\n");
 }
 
@@ -64,9 +75,11 @@ export function formatVerses(verses: VerseData[], opts: FormatOptions): string {
 
   const header = headerLabel(opts, verses.map((v) => v.verse));
   const first = verses[0];
-  const lines = [`> [!quote] [[${first.linkTarget}|${header}]] (${opts.version})`];
+  const lines = [`> [!quote] [[${first.linkTarget}|${header}]] (${versionLabel(opts)})`];
   for (const v of verses) {
     lines.push(`> [[${v.linkTarget}|${v.verse}]] ${oneLine(v.texts[opts.version] ?? "")}`);
+    const secondary = opts.secondaryVersion && v.texts[opts.secondaryVersion];
+    if (secondary) lines.push(`> _${oneLine(secondary)}_`);
   }
   return lines.join("\n") + "\n";
 }

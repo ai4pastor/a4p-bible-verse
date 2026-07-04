@@ -14,6 +14,8 @@ import { BibleReference, VERSIONS, Version } from "./types";
 
 interface VerseSuggestion {
   version: Version;
+  /** 병렬 삽입 시 두 번째 역본 */
+  secondary?: Version;
   label: string;
 }
 
@@ -21,12 +23,15 @@ interface VerseSuggestion {
 const MAX_QUERY_LEN = 30;
 
 /**
- * 에디터에서 ";;요3:16" 타이핑 → 역본 5개 제안 → 선택 시 콜아웃으로 치환.
- * 범위 세밀 선택이 필요하면 모달을 쓴다.
+ * 에디터 자동완성.
+ * - 일반 트리거(";;요3:16"): 역본 5개 제안 → 선택 역본으로 삽입
+ * - 병렬 트리거(";;;요3:16"): 설정에 등록된 역본 쌍이 절마다 교차로 함께 삽입
+ * 두 트리거가 겹치면(";;;"는 ";;"를 포함) 더 뒤에서 끝나는·더 긴 쪽이 이긴다.
  */
 export class BibleVerseSuggest extends EditorSuggest<VerseSuggestion> {
   private plugin: BibleVersePlugin;
   private ref: BibleReference | null = null;
+  private parallel = false;
 
   constructor(plugin: BibleVersePlugin) {
     super(plugin.app);
@@ -39,22 +44,39 @@ export class BibleVerseSuggest extends EditorSuggest<VerseSuggestion> {
     _file: TFile | null,
   ): EditorSuggestTriggerInfo | null {
     if (!this.plugin.settings.enableSuggest) return null;
-    const trigger = this.plugin.settings.suggestTrigger;
-    if (!trigger) return null;
-
     const line = editor.getLine(cursor.line).slice(0, cursor.ch);
-    const idx = line.lastIndexOf(trigger);
-    if (idx === -1) return null;
 
-    const query = line.slice(idx + trigger.length);
+    const { suggestTrigger, parallelTrigger } = this.plugin.settings;
+    const candidates: Array<{ trigger: string; parallel: boolean }> = [];
+    if (parallelTrigger) candidates.push({ trigger: parallelTrigger, parallel: true });
+    if (suggestTrigger) candidates.push({ trigger: suggestTrigger, parallel: false });
+
+    let best: { idx: number; trigger: string; parallel: boolean } | null = null;
+    for (const c of candidates) {
+      const idx = line.lastIndexOf(c.trigger);
+      if (idx === -1) continue;
+      const end = idx + c.trigger.length;
+      const bestEnd = best ? best.idx + best.trigger.length : -1;
+      if (
+        !best ||
+        end > bestEnd ||
+        (end === bestEnd && c.trigger.length > best.trigger.length)
+      ) {
+        best = { idx, trigger: c.trigger, parallel: c.parallel };
+      }
+    }
+    if (!best) return null;
+
+    const query = line.slice(best.idx + best.trigger.length);
     if (!query.trim() || query.length > MAX_QUERY_LEN) return null;
 
     const parsed = parseReference(query);
     if (!parsed.ok) return null;
 
     this.ref = parsed.ref;
+    this.parallel = best.parallel;
     return {
-      start: { line: cursor.line, ch: idx },
+      start: { line: cursor.line, ch: best.idx },
       end: cursor,
       query,
     };
@@ -63,6 +85,12 @@ export class BibleVerseSuggest extends EditorSuggest<VerseSuggestion> {
   getSuggestions(_context: EditorSuggestContext): VerseSuggestion[] {
     if (!this.ref) return [];
     const label = formatReference(this.ref);
+
+    if (this.parallel) {
+      const [primary, secondary] = this.plugin.settings.parallelVersions;
+      return [{ version: primary, secondary, label: `${label} (${primary} · ${secondary})` }];
+    }
+
     const def = this.plugin.settings.defaultVersion;
     const ordered = [def, ...VERSIONS.filter((v) => v !== def)];
     return ordered.map((version) => ({ version, label: `${label} (${version})` }));
@@ -93,6 +121,7 @@ export class BibleVerseSuggest extends EditorSuggest<VerseSuggestion> {
       bookName: ref.bookName,
       chapter: ref.chapter,
       version: suggestion.version,
+      secondaryVersion: suggestion.secondary,
       wholeChapter: ref.verseStart === undefined,
       merge: this.plugin.settings.mergeRange,
     });

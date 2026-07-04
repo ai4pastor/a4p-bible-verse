@@ -75,6 +75,57 @@ describe("formatVerses — 범위 병합", () => {
   });
 });
 
+describe("formatVerses — 병렬 역본 (secondaryVersion)", () => {
+  const dual = (n: number, ko: string, en: string): VerseData => ({
+    verse: n,
+    linkTarget: `요3_${n}`,
+    texts: { 새번역: ko, NIV: en },
+  });
+  const dualOpts = { ...baseOpts, secondaryVersion: "NIV" as const };
+
+  it("단일 절: 헤더에 두 역본, 본문 아래 이탤릭 병렬", () => {
+    const out = formatVerses([dual(16, "하나님이 세상을", "For God so loved")], dualOpts);
+    expect(out).toBe(
+      "> [!quote] [[요3_16|요한복음 3:16]] (새번역 · NIV)\n" +
+        "> 하나님이 세상을\n" +
+        "> _For God so loved_\n",
+    );
+  });
+
+  it("범위 병합: 절마다 한글 다음 줄에 영문 교차", () => {
+    const out = formatVerses(
+      [dual(16, "하나님이", "For God"), dual(17, "하나님께서", "For God did not")],
+      dualOpts,
+    );
+    expect(out).toBe(
+      "> [!quote] [[요3_16|요한복음 3:16-17]] (새번역 · NIV)\n" +
+        "> [[요3_16|16]] 하나님이\n" +
+        "> _For God_\n" +
+        "> [[요3_17|17]] 하나님께서\n" +
+        "> _For God did not_\n",
+    );
+  });
+
+  it("병렬 역본 본문이 없는 절은 그 절만 이탤릭 생략", () => {
+    const noEn: VerseData = { verse: 17, linkTarget: "요3_17", texts: { 새번역: "한글만" } };
+    const out = formatVerses([dual(16, "하나님이", "For God"), noEn], dualOpts);
+    expect(out).toContain("> [[요3_16|16]] 하나님이\n> _For God_\n");
+    expect(out).toContain("> [[요3_17|17]] 한글만\n");
+    expect(out.match(/_For God_/g)?.length).toBe(1);
+  });
+
+  it("병렬 역본의 여러 줄 본문은 한 줄로", () => {
+    const out = formatVerses([dual(16, "한글", "line one\nline two")], dualOpts);
+    expect(out).toContain("> _line one line two_\n");
+  });
+
+  it("secondaryVersion 없으면 기존 형식 그대로", () => {
+    const out = formatVerses([verse(16, "본문")], baseOpts);
+    expect(out).not.toContain("·");
+    expect(out).not.toMatch(/^> _.*_$/m);
+  });
+});
+
 describe("formatVerses — 절별 콜아웃 (merge=false)", () => {
   it("절마다 독립 콜아웃", () => {
     const out = formatVerses([verse(16, "가"), verse(17, "나")], {
