@@ -1,0 +1,26 @@
+export const VERSIONS = ["새번역", "개역개정", "쉬운성경", "NIV", "KJV"] as const;
+export type Version = (typeof VERSIONS)[number];
+
+/** 파싱된 장절 참조. verseStart가 없으면 장 전체를 뜻한다. */
+export interface BibleReference {
+  /** 파일명 약자 (예: "요", "고전") */
+  abbrev: string;
+  /** 정식 책 이름 (예: "요한복음") */
+  bookName: string;
+  chapter: number;
+  verseStart?: number;
+  verseEnd?: number;
+}
+
+export type ParseResult =
+  | { ok: true; ref: BibleReference }
+  | { ok: false; reason: string };
+
+/** 볼트에서 읽어온 한 절의 데이터 */
+export interface VerseData {
+  verse: number;
+  /** 노트 파일명(확장자 제외) — wikilink 대상 (예: "요3_16") */
+  linkTarget: string;
+  /** 역본별 본문. 노트에 해당 역본 콜아웃이 없으면 undefined */
+  texts: Partial<Record<Version, string>>;
+}

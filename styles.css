@@ -1,0 +1,128 @@
+/* A4P 성경구절 — 검색·삽입 모달 */
+
+.bible-verse-modal {
+  max-width: 620px;
+  width: 90vw;
+}
+
+.bible-verse-input-wrap {
+  padding-bottom: var(--size-4-2);
+}
+
+.bible-verse-input {
+  width: 100%;
+  font-size: var(--font-ui-medium);
+  padding: var(--size-4-2) var(--size-4-3);
+}
+
+.bible-verse-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--size-4-2);
+  padding-bottom: var(--size-4-2);
+  min-height: 28px;
+}
+
+.bible-verse-status {
+  font-size: var(--font-ui-small);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bible-verse-status.is-muted { color: var(--text-muted); }
+.bible-verse-status.is-ok { color: var(--text-normal); }
+.bible-verse-status.is-warn { color: var(--text-warning); }
+.bible-verse-status.is-error { color: var(--text-error); }
+
+.bible-verse-versions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.bible-verse-version-btn {
+  font-size: var(--font-ui-smaller);
+  padding: 2px 8px;
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.bible-verse-version-btn.is-active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.bible-verse-list {
+  max-height: 45vh;
+  overflow-y: auto;
+  border-top: 1px solid var(--background-modifier-border);
+  outline: none;
+}
+
+.bible-verse-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--size-4-2);
+  padding: var(--size-4-1) var(--size-4-2);
+  border-radius: var(--radius-s);
+  cursor: pointer;
+}
+
+.bible-verse-row:hover { background: var(--background-modifier-hover); }
+.bible-verse-row.is-highlighted { background: var(--background-modifier-hover); }
+.bible-verse-row.is-disabled { color: var(--text-faint); cursor: default; }
+
+.bible-verse-row input[type="checkbox"] {
+  flex-shrink: 0;
+  align-self: center;
+}
+
+.bible-verse-num {
+  flex-shrink: 0;
+  min-width: 2.2em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.bible-verse-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-ui-small);
+}
+
+.bible-verse-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--size-4-2);
+  padding-top: var(--size-4-2);
+  border-top: 1px solid var(--background-modifier-border);
+  margin-top: var(--size-4-1);
+}
+
+.bible-verse-hints {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+}
+
+.bible-verse-insert-btn { flex-shrink: 0; }
+
+/* 설정 탭 검증 결과 */
+.bible-verse-settings-status {
+  padding: var(--size-4-2) 0;
+}
+
+.bible-verse-settings-status-line {
+  margin: 2px 0;
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+}
