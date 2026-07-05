@@ -1,13 +1,15 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 import type BibleVersePlugin from "./main";
-import { VERSIONS, Version } from "./types";
+import { InsertFormat, VERSIONS, Version } from "./types";
 
 export interface BibleVerseSettings {
   /** 볼트 루트 기준 성경 폴더 경로 (하위에 구약/신약 폴더가 있어야 함) */
   biblePath: string;
   defaultVersion: Version;
-  /** 범위 삽입 시 병합 콜아웃 1개(true) vs 절별 콜아웃(false) */
-  mergeRange: boolean;
+  /** 삽입 형식 — 콜아웃 블록 vs 일반 텍스트(wikilink 유지) */
+  insertFormat: InsertFormat;
+  /** 범위 삽입 시 절마다 줄바꿈(true) vs 한 문단으로 이어 붙임(false) */
+  verseNewline: boolean;
   enableSuggest: boolean;
   suggestTrigger: string;
   /** 병렬 삽입 자동완성 트리거 (예: ;;;요3:16 → 두 역본 동시 삽입) */
@@ -25,7 +27,8 @@ export interface BibleVerseSettings {
 export const DEFAULT_SETTINGS: BibleVerseSettings = {
   biblePath: "100. notes/170. 성경",
   defaultVersion: "새번역",
-  mergeRange: true,
+  insertFormat: "callout",
+  verseNewline: true,
   enableSuggest: true,
   suggestTrigger: ";;",
   parallelTrigger: ";;;",
@@ -88,14 +91,32 @@ export class BibleVerseSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName("범위 삽입 방식")
-      .setDesc("켜면 여러 절을 콜아웃 하나로 병합하고, 끄면 절마다 콜아웃을 만듭니다.")
-      .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.mergeRange).onChange(async (value) => {
-          this.plugin.settings.mergeRange = value;
+      .setName("삽입 형식")
+      .setDesc(
+        "콜아웃: 인용 콜아웃 블록으로 삽입. 일반 텍스트: 콜아웃 없이 본문만 삽입 (wikilink는 유지되어 백링크·인용한 설교 기능이 계속 작동합니다).",
+      )
+      .addDropdown((drop) => {
+        drop.addOption("callout", "콜아웃");
+        drop.addOption("text", "일반 텍스트");
+        drop.setValue(this.plugin.settings.insertFormat).onChange(async (value) => {
+          this.plugin.settings.insertFormat = value as InsertFormat;
           await this.plugin.persist();
-        }),
-      );
+        });
+      });
+
+    new Setting(containerEl)
+      .setName("범위 삽입 스타일")
+      .setDesc("여러 절을 삽입할 때 절마다 줄을 바꿀지, 줄바꿈 없이 한 문단으로 이어 붙일지 정합니다.")
+      .addDropdown((drop) => {
+        drop.addOption("lines", "절마다 줄바꿈");
+        drop.addOption("inline", "한 문단 이어붙임");
+        drop
+          .setValue(this.plugin.settings.verseNewline ? "lines" : "inline")
+          .onChange(async (value) => {
+            this.plugin.settings.verseNewline = value === "lines";
+            await this.plugin.persist();
+          });
+      });
 
     new Setting(containerEl)
       .setName("에디터 자동완성")

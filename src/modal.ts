@@ -599,7 +599,8 @@ export class VerseInsertModal extends Modal {
       version: this.version,
       secondaryVersion: this.secondary ?? undefined,
       wholeChapter,
-      merge: this.plugin.settings.mergeRange,
+      format: this.plugin.settings.insertFormat,
+      verseNewline: this.plugin.settings.verseNewline,
     });
     if (!insertBlock(this.app, block, this.editor)) return;
     if (close) this.close();
@@ -621,7 +622,6 @@ export class VerseInsertModal extends Modal {
       version: this.version,
       secondaryVersion: this.secondary ?? undefined,
       wholeChapter,
-      merge: true,
     });
     await navigator.clipboard.writeText(text);
     new Notice("클립보드에 복사됨 (플레인 텍스트)");
@@ -643,7 +643,8 @@ export class VerseInsertModal extends Modal {
       version: this.version,
       secondaryVersion: this.secondary ?? undefined,
       wholeChapter: false,
-      merge: true,
+      format: this.plugin.settings.insertFormat,
+      verseNewline: this.plugin.settings.verseNewline,
     });
     if (!insertBlock(this.app, block, this.editor)) return;
     new Notice(`${this.ref.bookName} ${verse.chapter}:${verse.verse} 삽입됨 (${this.version})`);

@@ -1,6 +1,9 @@
 export const VERSIONS = ["새번역", "개역개정", "쉬운성경", "NIV", "KJV"] as const;
 export type Version = (typeof VERSIONS)[number];
 
+/** 삽입 형식 — 콜아웃 블록 vs 일반 텍스트(wikilink 유지) */
+export type InsertFormat = "callout" | "text";
+
 /** 파싱된 장절 참조. verseStart가 없으면 장 전체를 뜻한다. */
 export interface BibleReference {
   /** 파일명 약자 (예: "요", "고전") */

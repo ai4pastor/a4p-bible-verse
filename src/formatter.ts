@@ -1,4 +1,4 @@
-import { Version, VerseData } from "./types";
+import { InsertFormat, Version, VerseData } from "./types";
 
 export interface FormatOptions {
   bookName: string;
@@ -8,8 +8,10 @@ export interface FormatOptions {
   secondaryVersion?: Version;
   /** 장 전체 요청 + 전체 선택이면 헤더를 "시편 23편" 형태로 */
   wholeChapter: boolean;
-  /** true: 병합 콜아웃 1개, false: 절별 콜아웃 */
-  merge: boolean;
+  /** "callout"(기본): 인용 콜아웃, "text": 일반 텍스트(wikilink 유지) */
+  format?: InsertFormat;
+  /** true(기본): 병합 시 절마다 줄바꿈, false: 절 번호 링크와 함께 한 문단으로 이어 붙임 */
+  verseNewline?: boolean;
 }
 
 const oneLine = (t: string) => t.replace(/\s*\n\s*/g, " ").trim();
@@ -60,6 +62,15 @@ function versionLabel(opts: FormatOptions): string {
     : opts.version;
 }
 
+/** "[[요3_16|16]] 본문" — 병합 시 절 하나의 조각. 병렬 역본은 이탤릭으로 뒤따름 */
+function versePiece(verse: VerseData, opts: FormatOptions, multi: boolean): string {
+  const num = multi ? `${verse.chapter}:${verse.verse}` : `${verse.verse}`;
+  let piece = `[[${verse.linkTarget}|${num}]] ${oneLine(verse.texts[opts.version] ?? "")}`;
+  const secondary = opts.secondaryVersion && verse.texts[opts.secondaryVersion];
+  if (secondary) piece += ` _${oneLine(secondary)}_`;
+  return piece;
+}
+
 function singleCallout(verse: VerseData, opts: FormatOptions): string {
   const text = verse.texts[opts.version] ?? "";
   const label = `${opts.bookName} ${verse.chapter}:${verse.verse}`;
@@ -68,6 +79,38 @@ function singleCallout(verse: VerseData, opts: FormatOptions): string {
   const secondary = opts.secondaryVersion && verse.texts[opts.secondaryVersion];
   if (secondary) lines.push(`> _${oneLine(secondary)}_`);
   return lines.join("\n");
+}
+
+function singleText(verse: VerseData, opts: FormatOptions): string {
+  const text = verse.texts[opts.version] ?? "";
+  const label = `${opts.bookName} ${verse.chapter}:${verse.verse}`;
+  const lines = [`[[${verse.linkTarget}|${label}]] (${versionLabel(opts)})`];
+  for (const t of text.split("\n")) lines.push(t);
+  const secondary = opts.secondaryVersion && verse.texts[opts.secondaryVersion];
+  if (secondary) lines.push(`_${oneLine(secondary)}_`);
+  return lines.join("\n");
+}
+
+/** 일반 텍스트 삽입 — 콜아웃 문법만 없고 헤더·절별 wikilink 구조는 콜아웃과 동일 */
+function formatTextVerses(verses: VerseData[], opts: FormatOptions): string {
+  if (verses.length === 1) return singleText(verses[0], opts) + "\n";
+
+  const multi = isMultiChapter(verses);
+  const first = verses[0];
+  const lines = [
+    `[[${first.linkTarget}|${headerLabel(opts, verses)}]] (${versionLabel(opts)})`,
+  ];
+  if (opts.verseNewline === false) {
+    lines.push(verses.map((v) => versePiece(v, opts, multi)).join(" "));
+  } else {
+    for (const v of verses) {
+      const num = multi ? `${v.chapter}:${v.verse}` : `${v.verse}`;
+      lines.push(`[[${v.linkTarget}|${num}]] ${oneLine(v.texts[opts.version] ?? "")}`);
+      const secondary = opts.secondaryVersion && v.texts[opts.secondaryVersion];
+      if (secondary) lines.push(`_${oneLine(secondary)}_`);
+    }
+  }
+  return lines.join("\n") + "\n";
 }
 
 /**
@@ -89,28 +132,30 @@ export function formatPlainVerses(verses: VerseData[], opts: FormatOptions): str
 }
 
 /**
- * 선택된 절들을 삽입용 콜아웃 문자열로 만든다.
+ * 선택된 절들을 삽입용 문자열로 만든다 (opts.format에 따라 콜아웃 또는 일반 텍스트).
  * 호출자는 선택 역본의 본문이 있는 절만 넘겨야 한다.
  */
 export function formatVerses(verses: VerseData[], opts: FormatOptions): string {
   if (verses.length === 0) return "";
 
-  if (verses.length === 1) return singleCallout(verses[0], opts) + "\n";
+  if (opts.format === "text") return formatTextVerses(verses, opts);
 
-  if (!opts.merge) {
-    return verses.map((v) => singleCallout(v, opts)).join("\n\n") + "\n";
-  }
+  if (verses.length === 1) return singleCallout(verses[0], opts) + "\n";
 
   const multi = isMultiChapter(verses);
   const first = verses[0];
   const lines = [
     `> [!quote] [[${first.linkTarget}|${headerLabel(opts, verses)}]] (${versionLabel(opts)})`,
   ];
-  for (const v of verses) {
-    const num = multi ? `${v.chapter}:${v.verse}` : `${v.verse}`;
-    lines.push(`> [[${v.linkTarget}|${num}]] ${oneLine(v.texts[opts.version] ?? "")}`);
-    const secondary = opts.secondaryVersion && v.texts[opts.secondaryVersion];
-    if (secondary) lines.push(`> _${oneLine(secondary)}_`);
+  if (opts.verseNewline === false) {
+    lines.push(`> ${verses.map((v) => versePiece(v, opts, multi)).join(" ")}`);
+  } else {
+    for (const v of verses) {
+      const num = multi ? `${v.chapter}:${v.verse}` : `${v.verse}`;
+      lines.push(`> [[${v.linkTarget}|${num}]] ${oneLine(v.texts[opts.version] ?? "")}`);
+      const secondary = opts.secondaryVersion && v.texts[opts.secondaryVersion];
+      if (secondary) lines.push(`> _${oneLine(secondary)}_`);
+    }
   }
   return lines.join("\n") + "\n";
 }

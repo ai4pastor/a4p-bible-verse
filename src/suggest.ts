@@ -126,7 +126,8 @@ export class BibleVerseSuggest extends EditorSuggest<VerseSuggestion> {
       version: suggestion.version,
       secondaryVersion: suggestion.secondary,
       wholeChapter: ref.verseStart === undefined,
-      merge: this.plugin.settings.mergeRange,
+      format: this.plugin.settings.insertFormat,
+      verseNewline: this.plugin.settings.verseNewline,
     });
     ctx.editor.replaceRange(block, ctx.start, ctx.end);
   }
