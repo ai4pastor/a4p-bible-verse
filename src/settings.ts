@@ -22,6 +22,8 @@ export interface BibleVerseSettings {
   stripAnnotations: boolean;
   /** 성경 폴더 기준 주석 폴더 상대 경로 — 비우면 주석 기능 끔 */
   commentaryPath: string;
+  /** 키워드 본문 검색 대상 — "current": 현재 선택 역본만, "all": 5역본 전체 */
+  keywordSearchScope: "current" | "all";
 }
 
 export const DEFAULT_SETTINGS: BibleVerseSettings = {
@@ -36,6 +38,7 @@ export const DEFAULT_SETTINGS: BibleVerseSettings = {
   sermonFolder: "300. Sermons",
   stripAnnotations: false,
   commentaryPath: "171. 성경주석",
+  keywordSearchScope: "current",
 };
 
 export class BibleVerseSettingTab extends PluginSettingTab {

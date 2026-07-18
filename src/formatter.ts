@@ -132,6 +132,29 @@ export function formatPlainVerses(verses: VerseData[], opts: FormatOptions): str
 }
 
 /**
+ * 키워드 검색 결과처럼 여러 책·장에 흩어진 절들을 formatVerses 호출 단위(책+장)로 묶는다.
+ * 그룹 순서는 입력 순서(호출자가 정경 순으로 정렬해 넘김), 그룹 안은 절 번호 순.
+ */
+export function groupForInsert<T extends VerseData & { bookName: string }>(
+  verses: T[],
+): Array<{ bookName: string; chapter: number; verses: T[] }> {
+  const groups: Array<{ bookName: string; chapter: number; verses: T[] }> = [];
+  const byKey = new Map<string, { bookName: string; chapter: number; verses: T[] }>();
+  for (const v of verses) {
+    const key = `${v.bookName}|${v.chapter}`;
+    let group = byKey.get(key);
+    if (!group) {
+      group = { bookName: v.bookName, chapter: v.chapter, verses: [] };
+      byKey.set(key, group);
+      groups.push(group);
+    }
+    group.verses.push(v);
+  }
+  for (const group of groups) group.verses.sort((a, b) => a.verse - b.verse);
+  return groups;
+}
+
+/**
  * 선택된 절들을 삽입용 문자열로 만든다 (opts.format에 따라 콜아웃 또는 일반 텍스트).
  * 호출자는 선택 역본의 본문이 있는 절만 넘겨야 한다.
  */

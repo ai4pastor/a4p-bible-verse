@@ -176,6 +176,30 @@
   font-size: var(--font-ui-small);
 }
 
+/* 키워드 검색 결과: "책 장:절" 라벨 */
+.bible-verse-ref {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 키워드 매칭 하이라이트 */
+.bible-verse-match {
+  background: var(--text-highlight-bg);
+  border-radius: 2px;
+}
+
+/* 다른 역본 매칭 뱃지 (전체 역본 검색 시) */
+.bible-verse-badge {
+  flex-shrink: 0;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  padding: 0 4px;
+}
+
 .bible-verse-context {
   border-top: 1px solid var(--background-modifier-border);
 }

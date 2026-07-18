@@ -1,11 +1,12 @@
 import { App, Component, Editor, MarkdownRenderer, Modal, Notice, TFile } from "obsidian";
 import { BibleData, LoadResult } from "./bible-data";
-import { formatPlainVerses, formatVerses } from "./formatter";
+import { formatPlainVerses, formatVerses, groupForInsert } from "./formatter";
 import type BibleVersePlugin from "./main";
-import { extractHeadingSection } from "./note-parser";
+import { extractHeadingSection, stripAnnotations } from "./note-parser";
 import { formatReference, parseLinkTarget, parseReference } from "./reference-parser";
 import { insertBlock } from "./insert";
-import { BibleReference, VERSIONS, Version } from "./types";
+import { SearchHit, searchVerses } from "./search";
+import { BibleReference, IndexEntry, VERSIONS, Version, VerseData } from "./types";
 
 const DEBOUNCE_MS = 150;
 
@@ -34,6 +35,9 @@ export class VerseInsertModal extends Modal {
   private secondary: Version | null = null;
   private ref: BibleReference | null = null;
   private loaded: LoadResult | null = null;
+  /** 키워드 본문 검색 결과 — null이 아니면 키워드 모드 (참조 모드와 상호 배타) */
+  private keywordHits: SearchHit[] | null = null;
+  private keywordExactTotal = 0;
   private selected = new Set<string>(); // linkTarget 기준 (장 경계 범위에서 절 번호 중복 방지)
   private highlight = -1; // -1 = 입력창 존, 0+ = 목록 행 인덱스
   private debounceTimer: number | null = null;
@@ -56,7 +60,7 @@ export class VerseInsertModal extends Modal {
     const inputWrap = contentEl.createDiv({ cls: "bible-verse-input-wrap" });
     this.inputEl = inputWrap.createEl("input", {
       type: "text",
-      placeholder: "예: 요3:16 / 요3:16-20 / 요한복음 3장 16절 / 시23편",
+      placeholder: "예: 요3:16 / 시23편 / 키워드(사랑 은혜)",
       cls: "bible-verse-input",
     });
     this.inputEl.addEventListener("input", () => this.scheduleSearch());
@@ -169,14 +173,21 @@ export class VerseInsertModal extends Modal {
     if (!query) {
       this.ref = null;
       this.loaded = null;
+      this.keywordHits = null;
       this.renderEmptyState();
       return;
     }
 
     const parsed = parseReference(query);
     if (!parsed.ok) {
+      // 참조 형태가 아닌 입력(예: "사랑 은혜")은 본문 키워드 검색으로 폴백
+      if (parsed.kind === "unrecognized" && query.length >= 2) {
+        await this.runKeywordSearch(query, id);
+        return;
+      }
       this.ref = null;
       this.loaded = null;
+      this.keywordHits = null;
       this.setStatus(parsed.reason, "error");
       this.listEl.empty();
       this.contextEl.empty();
@@ -198,6 +209,7 @@ export class VerseInsertModal extends Modal {
     if (!outcome.ok) {
       this.ref = null;
       this.loaded = null;
+      this.keywordHits = null;
       this.setStatus(outcome.reason, "error");
       this.listEl.empty();
       this.contextEl.empty();
@@ -207,6 +219,7 @@ export class VerseInsertModal extends Modal {
 
     this.ref = parsed.ref;
     this.loaded = outcome.result;
+    this.keywordHits = null;
     this.selected = new Set(outcome.result.verses.map((v) => v.linkTarget));
     this.highlight = -1;
     this.citing = this.data.citingNotes(
@@ -222,10 +235,74 @@ export class VerseInsertModal extends Modal {
     this.renderContext();
   }
 
+  /** 본문 키워드 검색 — 첫 실행 시 인덱스를 빌드(진행률 표시)한 뒤 선형 스캔 */
+  private async runKeywordSearch(query: string, id: number) {
+    this.ref = null;
+    this.loaded = null;
+
+    const index = this.plugin.verseIndex;
+    if (index.status !== "ready") {
+      this.listEl.empty();
+      this.contextEl.empty();
+      this.setStatus("본문 인덱스 준비 중… (처음 한 번만 걸립니다)", "muted");
+      const err = await index.ensureBuilt((done, total) => {
+        if (id === this.requestId) {
+          this.setStatus(
+            `본문 인덱스 생성 중… (${done.toLocaleString()}/${total.toLocaleString()})`,
+            "muted",
+          );
+        }
+      });
+      if (id !== this.requestId) return;
+      if (err) {
+        this.keywordHits = null;
+        this.setStatus(err, "error");
+        this.updateInsertButton();
+        return;
+      }
+    }
+    if (id !== this.requestId) return;
+
+    const versions: Version[] =
+      this.plugin.settings.keywordSearchScope === "all"
+        ? [this.version, ...VERSIONS.filter((v) => v !== this.version)]
+        : [this.version];
+    const outcome = searchVerses(index.entries, query, { versions });
+
+    this.keywordHits = outcome.hits;
+    this.keywordExactTotal = outcome.exactTotal;
+    this.selected = new Set(); // 키워드 결과는 기본 선택 없음 (참조 모드와 반대)
+    this.highlight = -1;
+    this.citing = [];
+
+    const scopeLabel =
+      this.plugin.settings.keywordSearchScope === "all" ? "전체 역본" : this.version;
+    const hits = outcome.hits;
+    if (hits.length === 0) {
+      this.setStatus(`"${query}" — 일치하는 절이 없습니다 (${scopeLabel})`, "warn");
+    } else if (hits[0].tier === "fuzzy") {
+      this.setStatus(
+        `"${query}" — 정확히 일치하는 절이 없어 비슷한 절 ${hits.length}개를 표시합니다`,
+        "warn",
+      );
+    } else {
+      const exactShown = hits.filter((h) => h.tier === "exact").length;
+      const partialShown = hits.length - exactShown;
+      const countLabel =
+        this.keywordExactTotal > exactShown
+          ? `${this.keywordExactTotal.toLocaleString()}절 중 ${exactShown}절 표시`
+          : `${exactShown}절`;
+      const partialLabel = partialShown > 0 ? ` · 유사 ${partialShown}절` : "";
+      this.setStatus(`"${query}" 본문 검색 (${scopeLabel}) — ${countLabel}${partialLabel}`, "ok");
+    }
+    this.renderList();
+    this.renderContext();
+  }
+
   // ── 렌더링 ────────────────────────────────────────────
 
   private renderEmptyState() {
-    this.setStatus("장절 참조를 입력하세요 (예: 요3:16, 시23편)", "muted");
+    this.setStatus("장절 참조 또는 키워드를 입력하세요 (예: 요3:16, 사랑 은혜)", "muted");
     this.listEl.empty();
     this.contextEl.empty();
     this.updateInsertButton();
@@ -268,6 +345,10 @@ export class VerseInsertModal extends Modal {
   }
 
   private renderList() {
+    if (this.keywordHits) {
+      this.renderKeywordList();
+      return;
+    }
     this.listEl.empty();
     if (!this.loaded) return;
     const multiChapter = this.loaded.verses.some(
@@ -308,6 +389,72 @@ export class VerseInsertModal extends Modal {
       });
     });
     this.updateInsertButton();
+  }
+
+  /** 키워드 검색 결과 목록 — "책 장:절" 라벨 + 매칭 하이라이트 */
+  private renderKeywordList() {
+    this.listEl.empty();
+    const hits = this.keywordHits ?? [];
+
+    hits.forEach((hit, idx) => {
+      const entry = hit.entry;
+      const currentText = entry.texts[this.version];
+      const row = this.listEl.createDiv({
+        cls: `bible-verse-row${this.highlight === idx ? " is-highlighted" : ""}${
+          currentText ? "" : " is-disabled"
+        }`,
+      });
+
+      const checkbox = row.createEl("input", { type: "checkbox" });
+      checkbox.checked = this.selected.has(entry.linkTarget) && !!currentText;
+      checkbox.disabled = !currentText;
+      checkbox.tabIndex = -1;
+      checkbox.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.toggleVerse(entry.linkTarget);
+      });
+
+      row.createSpan({
+        cls: "bible-verse-ref",
+        text: `${entry.bookName} ${entry.chapter}:${entry.verse}`,
+      });
+
+      const textEl = row.createSpan({ cls: "bible-verse-text" });
+      if (hit.version === this.version && currentText) {
+        this.appendHighlighted(textEl, currentText, hit.matchedRanges);
+      } else if (currentText) {
+        // 다른 역본에서 매칭 — 현재 역본 본문을 보여주고 매칭 역본 뱃지 표시
+        textEl.setText(currentText);
+        row.createSpan({ cls: "bible-verse-badge", text: `${hit.version} 일치` });
+      } else {
+        // 현재 역본 본문 없음 — 매칭된 역본 본문을 대신 표시 (삽입은 불가)
+        this.appendHighlighted(textEl, entry.texts[hit.version] ?? "", hit.matchedRanges);
+        row.createSpan({ cls: "bible-verse-badge", text: `${hit.version} 본문` });
+      }
+
+      this.registerHover(row, entry.linkTarget);
+      row.addEventListener("click", () => {
+        if (!currentText) return;
+        this.highlight = idx;
+        this.toggleVerse(entry.linkTarget);
+      });
+    });
+    this.updateInsertButton();
+  }
+
+  /** matchedRanges 구간을 <span class="bible-verse-match">로 감싸 하이라이트 */
+  private appendHighlighted(
+    el: HTMLElement,
+    text: string,
+    ranges: Array<[number, number]>,
+  ) {
+    let pos = 0;
+    for (const [start, end] of ranges) {
+      if (start > pos) el.appendText(text.slice(pos, start));
+      el.createSpan({ cls: "bible-verse-match", text: text.slice(start, end) });
+      pos = end;
+    }
+    if (pos < text.length) el.appendText(text.slice(pos));
   }
 
   // ── 인라인 미리보기 ────────────────────────────────────
@@ -405,10 +552,39 @@ export class VerseInsertModal extends Modal {
   /** 하이라이트된 절(없으면 첫 절)의 관련구절·평행본문 칩 + 인용한 설교 줄 */
   private renderContext() {
     this.contextEl.empty();
+    if (this.keywordHits) {
+      const hit = this.keywordHits[Math.max(this.highlight, 0)];
+      if (hit) void this.renderKeywordContext(hit);
+      return;
+    }
     if (!this.loaded || this.loaded.verses.length === 0) return;
 
     const verse = this.loaded.verses[Math.max(this.highlight, 0)] ?? this.loaded.verses[0];
+    this.renderContextFor(verse);
+  }
 
+  /**
+   * 키워드 모드: 인덱스에는 frontmatter(관련구절 등)가 없으므로
+   * 하이라이트된 절 하나만 lazy 로드해 컨텍스트를 채운다 (1파일, ~1ms).
+   */
+  private async renderKeywordContext(hit: SearchHit) {
+    const ref = parseLinkTarget(hit.entry.linkTarget);
+    if (!ref) return;
+    const outcome = await this.data.loadVerses(ref);
+    // 하이라이트가 이미 다른 절로 이동했으면 폐기
+    const current = this.keywordHits?.[Math.max(this.highlight, 0)];
+    if (current !== hit) return;
+    if (!outcome.ok || !outcome.result.verses[0]) return;
+    const verse = outcome.result.verses[0];
+    this.citing = this.data.citingNotes(
+      [verse.path ?? ""],
+      this.plugin.settings.sermonFolder,
+    );
+    this.contextEl.empty();
+    this.renderContextFor(verse);
+  }
+
+  private renderContextFor(verse: VerseData) {
     const chipRow = (label: string, targets: string[], onClick: (t: string) => void) => {
       if (targets.length === 0) return;
       const row = this.contextEl.createDiv({ cls: "bible-verse-context-row" });
@@ -516,6 +692,11 @@ export class VerseInsertModal extends Modal {
     this.version = v;
     sessionVersion = v;
     this.renderVersionBar();
+    if (this.keywordHits) {
+      // 키워드 매칭은 역본 종속 — 바뀐 역본으로 재검색
+      void this.runSearch();
+      return;
+    }
     this.renderList();
   }
 
@@ -526,7 +707,7 @@ export class VerseInsertModal extends Modal {
   }
 
   private moveHighlight(dir: 1 | -1) {
-    const count = this.loaded?.verses.length ?? 0;
+    const count = this.keywordHits?.length ?? this.loaded?.verses.length ?? 0;
     if (count === 0) return;
     const next = this.highlight + dir;
     if (next < 0) {
@@ -551,7 +732,9 @@ export class VerseInsertModal extends Modal {
   private onListKeydown(e: KeyboardEvent) {
     if (e.key === " ") {
       e.preventDefault();
-      const verse = this.loaded?.verses[this.highlight];
+      const verse = this.keywordHits
+        ? this.keywordHits[this.highlight]?.entry
+        : this.loaded?.verses[this.highlight];
       if (verse && verse.texts[this.version]) this.toggleVerse(verse.linkTarget);
       return;
     }
@@ -567,8 +750,11 @@ export class VerseInsertModal extends Modal {
   }
 
   private toggleAll() {
-    if (!this.loaded) return;
-    const insertable = this.loaded.verses.filter((v) => v.texts[this.version]);
+    const items = this.keywordHits
+      ? this.keywordHits.map((h) => h.entry)
+      : this.loaded?.verses;
+    if (!items) return;
+    const insertable = items.filter((v) => v.texts[this.version]);
     const allSelected = insertable.every((v) => this.selected.has(v.linkTarget));
     if (allSelected) this.selected.clear();
     else this.selected = new Set(insertable.map((v) => v.linkTarget));
@@ -578,13 +764,69 @@ export class VerseInsertModal extends Modal {
   // ── 삽입 ──────────────────────────────────────────────
 
   private insertableVerses() {
+    if (this.keywordHits) {
+      return this.selectedKeywordEntries();
+    }
     if (!this.loaded) return [];
     return this.loaded.verses.filter(
       (v) => this.selected.has(v.linkTarget) && v.texts[this.version],
     );
   }
 
+  /** 키워드 모드에서 선택된(+현재 역본 본문이 있는) 절들 — 정경 순 */
+  private selectedKeywordEntries(): IndexEntry[] {
+    if (!this.keywordHits) return [];
+    return this.keywordHits
+      .filter((h) => this.selected.has(h.entry.linkTarget) && h.entry.texts[this.version])
+      .map((h) => h.entry)
+      .sort((a, b) => a.sortKey - b.sortKey);
+  }
+
+  /** 인덱스 엔트리 → 삽입용 절 데이터 (각주 정리 설정을 삽입 시점에 적용) */
+  private toInsertableEntries(entries: IndexEntry[]): IndexEntry[] {
+    if (!this.plugin.settings.stripAnnotations) return entries;
+    return entries.map((entry) => {
+      const texts = { ...entry.texts };
+      for (const key of Object.keys(texts) as Version[]) {
+        texts[key] = stripAnnotations(texts[key]!);
+      }
+      return { ...entry, texts };
+    });
+  }
+
+  /** 키워드 결과는 여러 책·장에 걸치므로 책+장 그룹별로 블록을 만들어 이어 붙인다 */
+  private formatKeywordBlock(entries: IndexEntry[], kind: "insert" | "plain"): string {
+    const groups = groupForInsert(this.toInsertableEntries(entries));
+    return groups
+      .map((group) => {
+        const opts = {
+          bookName: group.bookName,
+          chapter: group.chapter,
+          version: this.version,
+          secondaryVersion: this.secondary ?? undefined,
+          wholeChapter: false,
+          format: this.plugin.settings.insertFormat,
+          verseNewline: this.plugin.settings.verseNewline,
+        };
+        return kind === "plain"
+          ? formatPlainVerses(group.verses, opts)
+          : formatVerses(group.verses, opts);
+      })
+      .join("\n");
+  }
+
   private insertSelected(close: boolean) {
+    if (this.keywordHits) {
+      const entries = this.selectedKeywordEntries();
+      if (entries.length === 0) {
+        new Notice("삽입할 절이 없습니다. 목록에서 절을 먼저 선택해주세요.");
+        return;
+      }
+      const block = this.formatKeywordBlock(entries, "insert");
+      if (!insertBlock(this.app, block, this.editor)) return;
+      if (close) this.close();
+      return;
+    }
     if (!this.ref || !this.loaded) return;
     const verses = this.insertableVerses();
     if (verses.length === 0) {
@@ -608,6 +850,16 @@ export class VerseInsertModal extends Modal {
 
   /** Cmd+Shift+C: 선택된 절을 플레인 텍스트(콜아웃·wikilink 없음)로 클립보드 복사 */
   private async copySelected() {
+    if (this.keywordHits) {
+      const entries = this.selectedKeywordEntries();
+      if (entries.length === 0) {
+        new Notice("복사할 절이 없습니다. 목록에서 절을 먼저 선택해주세요.");
+        return;
+      }
+      await navigator.clipboard.writeText(this.formatKeywordBlock(entries, "plain"));
+      new Notice("클립보드에 복사됨 (플레인 텍스트)");
+      return;
+    }
     if (!this.ref || !this.loaded) return;
     const verses = this.insertableVerses();
     if (verses.length === 0) {
@@ -629,6 +881,20 @@ export class VerseInsertModal extends Modal {
 
   /** Cmd+Enter: 하이라이트된 절(기본 첫 절) 1개만 삽입하고 모달 유지 — 연속 삽입 모드 */
   private insertHighlighted() {
+    if (this.keywordHits) {
+      const idx = this.highlight >= 0 ? this.highlight : 0;
+      const entry = this.keywordHits[idx]?.entry;
+      if (!entry) return;
+      if (!entry.texts[this.version]) {
+        new Notice(`이 절에는 ${this.version} 본문이 없습니다.`);
+        return;
+      }
+      const block = this.formatKeywordBlock([entry], "insert");
+      if (!insertBlock(this.app, block, this.editor)) return;
+      new Notice(`${entry.bookName} ${entry.chapter}:${entry.verse} 삽입됨 (${this.version})`);
+      this.focusInput();
+      return;
+    }
     if (!this.ref || !this.loaded) return;
     const idx = this.highlight >= 0 ? this.highlight : 0;
     const verse = this.loaded.verses[idx];

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatPlainVerses, formatVerses, verseRuns } from "../src/formatter";
+import { formatPlainVerses, formatVerses, groupForInsert, verseRuns } from "../src/formatter";
 import { VerseData } from "../src/types";
 
 const verse = (n: number, text: string): VerseData => ({
@@ -326,5 +326,37 @@ describe("formatVerses — 절 이어붙임 (verseNewline=false)", () => {
       "> [!quote] [[요3_16|요한복음 3:16-17]] (새번역)\n" +
         "> [[요3_16|16]] 가\n> [[요3_17|17]] 나\n",
     );
+  });
+});
+
+describe("groupForInsert — 키워드 결과 그룹핑", () => {
+  const v = (bookName: string, chapter: number, verse: number) => ({
+    bookName,
+    chapter,
+    verse,
+    linkTarget: `${bookName}${chapter}_${verse}`,
+    texts: { 새번역: "본문" },
+  });
+
+  it("다른 책은 분리", () => {
+    const groups = groupForInsert([v("요한복음", 3, 16), v("로마서", 5, 8)]);
+    expect(groups.map((g) => g.bookName)).toEqual(["요한복음", "로마서"]);
+  });
+  it("같은 책 다른 장은 분리", () => {
+    const groups = groupForInsert([v("요한복음", 3, 16), v("요한복음", 4, 2)]);
+    expect(groups.length).toBe(2);
+    expect(groups.map((g) => g.chapter)).toEqual([3, 4]);
+  });
+  it("같은 장은 병합 + 절 번호 순 정렬", () => {
+    const groups = groupForInsert([
+      v("요한복음", 3, 18),
+      v("로마서", 5, 8),
+      v("요한복음", 3, 16),
+    ]);
+    expect(groups.length).toBe(2);
+    expect(groups[0].verses.map((x) => x.verse)).toEqual([16, 18]);
+  });
+  it("빈 입력은 빈 그룹", () => {
+    expect(groupForInsert([])).toEqual([]);
   });
 });
