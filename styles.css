@@ -3,6 +3,11 @@
 .bible-verse-modal {
   max-width: 780px;
   width: 92vw;
+  /* 상단 고정 (중앙 정렬 해제) — 절 클릭 시 컨텍스트 칩(관련구절·주석) 줄 수가
+     절마다 달라 모달 높이가 변하는데, 중앙 정렬이면 그때마다 모달이 위아래로
+     재배치되어 목록이 움직인다. 상단 고정이면 아래로만 늘어나 목록이 고정된다. */
+  align-self: flex-start;
+  margin-top: 6vh;
 }
 
 .bible-verse-modal.bible-verse-modal-expanded {
