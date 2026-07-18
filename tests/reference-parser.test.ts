@@ -220,3 +220,38 @@ describe("formatReference", () => {
     expect(formatReference(ok("요3:36-4:2"))).toBe("요한복음 3:36-4:2");
   });
 });
+
+describe("실패 kind — 키워드 폴백 판별", () => {
+  function failKind(input: string) {
+    const r = parseReference(input);
+    expect(r.ok, `"${input}"는 실패해야 함`).toBe(false);
+    return r.ok ? "" : r.kind;
+  }
+
+  it("책 이름 미인식 → unrecognized (키워드 폴백)", () => {
+    expect(failKind("은혜")).toBe("unrecognized");
+    expect(failKind("love")).toBe("unrecognized");
+  });
+  it("단일 글자 약자 + 일반 단어 → unrecognized (사랑 = 사+랑)", () => {
+    expect(failKind("사랑")).toBe("unrecognized");
+    expect(failKind("마음")).toBe("unrecognized");
+    expect(failKind("시험")).toBe("unrecognized");
+  });
+  it("다중 토큰 키워드 → unrecognized", () => {
+    expect(failKind("사랑 은혜")).toBe("unrecognized");
+  });
+  it("책만 입력 (장·절 없음) → reference (안내 유지)", () => {
+    expect(failKind("요")).toBe("reference");
+    expect(failKind("요한복음")).toBe("reference");
+  });
+  it("장·절 형식 오류 → reference (숫자만 남은 경우)", () => {
+    expect(failKind("요3:16:20")).toBe("reference");
+  });
+  it("범위 오류 → reference", () => {
+    expect(failKind("요3:20-16")).toBe("reference");
+    expect(failKind("요4:2-3:36")).toBe("reference");
+  });
+  it("빈 입력 → reference", () => {
+    expect(failKind("")).toBe("reference");
+  });
+});

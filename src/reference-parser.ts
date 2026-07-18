@@ -16,7 +16,7 @@ const CROSS_CHAPTER_RE =
  */
 export function parseReference(input: string): ParseResult {
   const query = input.trim();
-  if (!query) return { ok: false, reason: "" };
+  if (!query) return { ok: false, reason: "", kind: "reference" };
 
   // 1) 책 토큰 최장 일치 (요일4:9가 요+일로 쪼개지지 않도록 길이 내림차순)
   const matched = BOOK_TOKENS.find(([token]) => query.startsWith(token));
@@ -27,6 +27,7 @@ export function parseReference(input: string): ParseResult {
       reason: suggestion
         ? `책 이름을 인식하지 못했습니다. 혹시 "${suggestion}"인가요?`
         : "책 이름을 인식하지 못했습니다 (예: 요3:16, 시23편)",
+      kind: "unrecognized",
     };
   }
   const [token, book] = matched;
@@ -34,7 +35,7 @@ export function parseReference(input: string): ParseResult {
   // 2) 나머지에서 장·절 파싱
   const rest = query.slice(token.length).replace(/^[\s.]+/, "");
   if (!rest) {
-    return { ok: false, reason: "장·절을 입력해주세요 (예: 요3:16, 시23편)" };
+    return { ok: false, reason: "장·절을 입력해주세요 (예: 요3:16, 시23편)", kind: "reference" };
   }
 
   const cross = rest.match(CROSS_CHAPTER_RE);
@@ -44,11 +45,11 @@ export function parseReference(input: string): ParseResult {
     const chapterEnd = parseInt(cross[3], 10);
     const verseEnd = parseInt(cross[4], 10);
     if (chapterEnd < chapter) {
-      return { ok: false, reason: "끝 장이 시작 장보다 앞설 수 없습니다" };
+      return { ok: false, reason: "끝 장이 시작 장보다 앞설 수 없습니다", kind: "reference" };
     }
     if (chapterEnd === chapter) {
       if (verseEnd < verseStart) {
-        return { ok: false, reason: "끝 절이 시작 절보다 앞설 수 없습니다" };
+        return { ok: false, reason: "끝 절이 시작 절보다 앞설 수 없습니다", kind: "reference" };
       }
       return {
         ok: true,
@@ -56,7 +57,7 @@ export function parseReference(input: string): ParseResult {
       };
     }
     if (chapter < 1 || verseStart < 1 || verseEnd < 1) {
-      return { ok: false, reason: "장·절은 1 이상이어야 합니다" };
+      return { ok: false, reason: "장·절은 1 이상이어야 합니다", kind: "reference" };
     }
     return {
       ok: true,
@@ -73,7 +74,13 @@ export function parseReference(input: string): ParseResult {
 
   const m = rest.match(CHAPTER_VERSE_RE);
   if (!m) {
-    return { ok: false, reason: `장·절 형식을 인식하지 못했습니다: "${rest}"` };
+    // "사랑"처럼 단일 글자 약자("사"=이사야) 뒤에 일반 단어가 이어진 경우는
+    // 참조가 아니라 키워드 질의다 — 남은 문자열에 문자가 있으면 unrecognized.
+    return {
+      ok: false,
+      reason: `장·절 형식을 인식하지 못했습니다: "${rest}"`,
+      kind: /[가-힣a-zA-Z]/.test(rest) ? "unrecognized" : "reference",
+    };
   }
 
   const chapter = parseInt(m[1], 10);
@@ -81,13 +88,13 @@ export function parseReference(input: string): ParseResult {
   const verseEnd = m[3] ? parseInt(m[3], 10) : undefined;
 
   if (verseEnd !== undefined && verseStart === undefined) {
-    return { ok: false, reason: "범위는 절 단위로만 지원합니다 (예: 요3:16-20)" };
+    return { ok: false, reason: "범위는 절 단위로만 지원합니다 (예: 요3:16-20)", kind: "reference" };
   }
   if (verseStart !== undefined && verseEnd !== undefined && verseEnd < verseStart) {
-    return { ok: false, reason: "끝 절이 시작 절보다 앞설 수 없습니다" };
+    return { ok: false, reason: "끝 절이 시작 절보다 앞설 수 없습니다", kind: "reference" };
   }
   if (chapter < 1 || (verseStart !== undefined && verseStart < 1)) {
-    return { ok: false, reason: "장·절은 1 이상이어야 합니다" };
+    return { ok: false, reason: "장·절은 1 이상이어야 합니다", kind: "reference" };
   }
 
   return {

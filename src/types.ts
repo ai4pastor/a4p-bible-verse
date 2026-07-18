@@ -18,9 +18,31 @@ export interface BibleReference {
   chapterEnd?: number;
 }
 
+/**
+ * 파싱 실패의 성격 —
+ * "reference": 참조 의도로 보이나 장·절이 불완전/범위 오류 (에러 안내 유지)
+ * "unrecognized": 참조 형태가 아님 (키워드 본문 검색 폴백 대상)
+ */
+export type ParseFailKind = "reference" | "unrecognized";
+
 export type ParseResult =
   | { ok: true; ref: BibleReference }
-  | { ok: false; reason: string };
+  | { ok: false; reason: string; kind: ParseFailKind };
+
+/** 본문 키워드 검색 인덱스의 한 절 항목 */
+export interface IndexEntry {
+  abbrev: string;
+  bookName: string;
+  /** 전역 정경 순 정렬 키: 권(구약 1-39, 신약 40-66)×1e6 + 장×1e3 + 절 */
+  sortKey: number;
+  chapter: number;
+  verse: number;
+  /** 노트 파일명(확장자 제외) — wikilink 대상 (예: "요3_16") */
+  linkTarget: string;
+  path: string;
+  /** 역본별 본문 (원문 그대로 — 각주 정리는 삽입 시점에 적용) */
+  texts: Partial<Record<Version, string>>;
+}
 
 /** 볼트에서 읽어온 한 절의 데이터 */
 export interface VerseData {
