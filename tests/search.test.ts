@@ -89,13 +89,18 @@ describe("Tier 1 — exact (전 토큰 AND)", () => {
     const exact = hits.filter((h) => h.tier === "exact");
     expect(exact.map((h) => h.entry.linkTarget)).toEqual(["요3_16"]);
   });
-  it("limit 절단 시에도 exactTotal은 전체 수", () => {
-    const { hits, exactTotal } = searchVerses(ENTRIES, "하나님", {
-      ...OPTS,
-      limit: 2,
-    });
-    expect(hits.length).toBe(2);
+  it("exact는 상한 없이 전부 반환", () => {
+    const { hits, exactTotal } = searchVerses(ENTRIES, "하나님", OPTS);
+    expect(hits.filter((h) => h.tier === "exact").length).toBe(3);
     expect(exactTotal).toBe(3);
+  });
+  it("partialLimit은 유사 결과만 자르고 exact는 유지", () => {
+    const { hits } = searchVerses(ENTRIES, "하나님 사랑", {
+      ...OPTS,
+      partialLimit: 0,
+    });
+    expect(hits.filter((h) => h.tier === "exact").length).toBe(2);
+    expect(hits.filter((h) => h.tier === "partial").length).toBe(0);
   });
   it("matchedRanges가 실제 매칭 위치를 가리킴", () => {
     const { hits } = searchVerses(ENTRIES, "사랑", OPTS);

@@ -12,7 +12,8 @@ import { IndexEntry, Version } from "./types";
  * 형태소 분석 없이 substring 매칭으로 충분하다. 32,900절 선형 스캔 ≈ 수 ms.
  */
 
-const DEFAULT_LIMIT = 50;
+/** 유사(partial) 결과 상한 — 보조 결과라 무제한이면 노이즈. exact는 잘리지 않는다 */
+const DEFAULT_PARTIAL_LIMIT = 50;
 /** 질의 bigram 중 절에 존재해야 하는 비율 (fuzzy 임계값) */
 const FUZZY_THRESHOLD = 0.5;
 const FUZZY_LIMIT = 20;
@@ -32,12 +33,13 @@ export interface SearchHit {
 export interface SearchOptions {
   /** 검색할 역본 (우선순위 순 — 첫 역본이 현재 표시 역본) */
   versions: Version[];
-  limit?: number;
+  /** 유사(partial) 결과 상한 — exact는 항상 전부 반환된다 */
+  partialLimit?: number;
 }
 
 export interface SearchOutcome {
   hits: SearchHit[];
-  /** limit 절단 전 완전 일치(exact) 절 수 */
+  /** 완전 일치(exact) 절 수 */
   exactTotal: number;
 }
 
@@ -128,7 +130,7 @@ export function searchVerses(
   opts: SearchOptions,
 ): SearchOutcome {
   const tokens = tokenize(query);
-  const limit = opts.limit ?? DEFAULT_LIMIT;
+  const partialLimit = opts.partialLimit ?? DEFAULT_PARTIAL_LIMIT;
   if (tokens.length === 0 || opts.versions.length === 0) {
     return { hits: [], exactTotal: 0 };
   }
@@ -165,16 +167,16 @@ export function searchVerses(
     };
     if (hit.tier === "exact") {
       exactTotal++;
-      if (exact.length < limit) exact.push(hit); // entries가 정경 순이므로 그대로 정렬됨
+      exact.push(hit); // entries가 정경 순이므로 그대로 정렬됨 — 잘림 없음
     } else if (tokens.length >= 2) {
       partial.push(hit);
     }
   }
 
   let hits = exact;
-  if (exact.length < limit && partial.length > 0) {
+  if (partial.length > 0) {
     partial.sort((a, b) => b.score - a.score || a.entry.sortKey - b.entry.sortKey);
-    hits = exact.concat(partial.slice(0, limit - exact.length));
+    hits = exact.concat(partial.slice(0, partialLimit));
   }
 
   if (hits.length === 0) {

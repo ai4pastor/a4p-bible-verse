@@ -38,6 +38,11 @@ export class VerseInsertModal extends Modal {
   /** 키워드 본문 검색 결과 — null이 아니면 키워드 모드 (참조 모드와 상호 배타) */
   private keywordHits: SearchHit[] | null = null;
   private keywordExactTotal = 0;
+  /** 키워드 목록의 행/체크박스 참조 — 수백 행 재렌더링 없이 증분 갱신용 */
+  private keywordRows: HTMLElement[] = [];
+  private keywordChecks = new Map<string, HTMLInputElement>();
+  /** 청크 렌더링 세대 — 새 렌더 시작 시 이전 예약 청크 폐기 */
+  private renderToken = 0;
   private selected = new Set<string>(); // linkTarget 기준 (장 경계 범위에서 절 번호 중복 방지)
   private highlight = -1; // -1 = 입력창 존, 0+ = 목록 행 인덱스
   private debounceTimer: number | null = null;
@@ -288,12 +293,11 @@ export class VerseInsertModal extends Modal {
     } else {
       const exactShown = hits.filter((h) => h.tier === "exact").length;
       const partialShown = hits.length - exactShown;
-      const countLabel =
-        this.keywordExactTotal > exactShown
-          ? `${this.keywordExactTotal.toLocaleString()}절 중 ${exactShown}절 표시`
-          : `${exactShown}절`;
       const partialLabel = partialShown > 0 ? ` · 유사 ${partialShown}절` : "";
-      this.setStatus(`"${query}" 본문 검색 (${scopeLabel}) — ${countLabel}${partialLabel}`, "ok");
+      this.setStatus(
+        `"${query}" 본문 검색 (${scopeLabel}) — ${exactShown.toLocaleString()}절${partialLabel}`,
+        "ok",
+      );
     }
     this.renderList();
     this.renderContext();
@@ -391,55 +395,80 @@ export class VerseInsertModal extends Modal {
     this.updateInsertButton();
   }
 
-  /** 키워드 검색 결과 목록 — "책 장:절" 라벨 + 매칭 하이라이트 */
+  /**
+   * 키워드 검색 결과 목록 — "책 장:절" 라벨 + 매칭 하이라이트.
+   * 완전 일치는 잘리지 않으므로 수백~수천 행이 될 수 있어
+   * 청크 단위로 렌더링하고, 선택·하이라이트는 재렌더링 없이 증분 갱신한다.
+   */
   private renderKeywordList() {
     this.listEl.empty();
+    this.keywordRows = [];
+    this.keywordChecks.clear();
     const hits = this.keywordHits ?? [];
+    const token = ++this.renderToken;
 
-    hits.forEach((hit, idx) => {
-      const entry = hit.entry;
-      const currentText = entry.texts[this.version];
-      const row = this.listEl.createDiv({
-        cls: `bible-verse-row${this.highlight === idx ? " is-highlighted" : ""}${
-          currentText ? "" : " is-disabled"
-        }`,
-      });
-
-      const checkbox = row.createEl("input", { type: "checkbox" });
-      checkbox.checked = this.selected.has(entry.linkTarget) && !!currentText;
-      checkbox.disabled = !currentText;
-      checkbox.tabIndex = -1;
-      checkbox.addEventListener("click", (e) => {
-        e.stopPropagation();
-        this.toggleVerse(entry.linkTarget);
-      });
-
-      row.createSpan({
-        cls: "bible-verse-ref",
-        text: `${entry.bookName} ${entry.chapter}:${entry.verse}`,
-      });
-
-      const textEl = row.createSpan({ cls: "bible-verse-text" });
-      if (hit.version === this.version && currentText) {
-        this.appendHighlighted(textEl, currentText, hit.matchedRanges);
-      } else if (currentText) {
-        // 다른 역본에서 매칭 — 현재 역본 본문을 보여주고 매칭 역본 뱃지 표시
-        textEl.setText(currentText);
-        row.createSpan({ cls: "bible-verse-badge", text: `${hit.version} 일치` });
-      } else {
-        // 현재 역본 본문 없음 — 매칭된 역본 본문을 대신 표시 (삽입은 불가)
-        this.appendHighlighted(textEl, entry.texts[hit.version] ?? "", hit.matchedRanges);
-        row.createSpan({ cls: "bible-verse-badge", text: `${hit.version} 본문` });
-      }
-
-      this.registerHover(row, entry.linkTarget);
-      row.addEventListener("click", () => {
-        if (!currentText) return;
-        this.highlight = idx;
-        this.toggleVerse(entry.linkTarget);
-      });
-    });
+    const CHUNK = 400;
+    const renderChunk = (start: number) => {
+      if (token !== this.renderToken) return; // 새 렌더가 시작됨 — 이 세대 폐기
+      const end = Math.min(start + CHUNK, hits.length);
+      for (let i = start; i < end; i++) this.renderKeywordRow(hits[i], i);
+      if (end < hits.length) window.setTimeout(() => renderChunk(end), 0);
+    };
+    renderChunk(0);
     this.updateInsertButton();
+  }
+
+  private renderKeywordRow(hit: SearchHit, idx: number) {
+    const entry = hit.entry;
+    const currentText = entry.texts[this.version];
+    const row = this.listEl.createDiv({
+      cls: `bible-verse-row${this.highlight === idx ? " is-highlighted" : ""}${
+        currentText ? "" : " is-disabled"
+      }`,
+    });
+    this.keywordRows[idx] = row;
+
+    const checkbox = row.createEl("input", { type: "checkbox" });
+    checkbox.checked = this.selected.has(entry.linkTarget) && !!currentText;
+    checkbox.disabled = !currentText;
+    checkbox.tabIndex = -1;
+    checkbox.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.toggleVerse(entry.linkTarget);
+    });
+    this.keywordChecks.set(entry.linkTarget, checkbox);
+
+    row.createSpan({
+      cls: "bible-verse-ref",
+      text: `${entry.bookName} ${entry.chapter}:${entry.verse}`,
+    });
+
+    const textEl = row.createSpan({ cls: "bible-verse-text" });
+    if (hit.version === this.version && currentText) {
+      this.appendHighlighted(textEl, currentText, hit.matchedRanges);
+    } else if (currentText) {
+      // 다른 역본에서 매칭 — 현재 역본 본문을 보여주고 매칭 역본 뱃지 표시
+      textEl.setText(currentText);
+      row.createSpan({ cls: "bible-verse-badge", text: `${hit.version} 일치` });
+    } else {
+      // 현재 역본 본문 없음 — 매칭된 역본 본문을 대신 표시 (삽입은 불가)
+      this.appendHighlighted(textEl, entry.texts[hit.version] ?? "", hit.matchedRanges);
+      row.createSpan({ cls: "bible-verse-badge", text: `${hit.version} 본문` });
+    }
+
+    this.registerHover(row, entry.linkTarget);
+    row.addEventListener("click", () => {
+      if (!currentText) return;
+      this.setKeywordHighlight(idx);
+      this.toggleVerse(entry.linkTarget);
+    });
+  }
+
+  /** 키워드 모드 하이라이트 이동 — 전체 재렌더링 없이 클래스만 갱신 */
+  private setKeywordHighlight(idx: number) {
+    if (this.highlight >= 0) this.keywordRows[this.highlight]?.removeClass("is-highlighted");
+    this.highlight = idx;
+    if (idx >= 0) this.keywordRows[idx]?.addClass("is-highlighted");
   }
 
   /** matchedRanges 구간을 <span class="bible-verse-match">로 감싸 하이라이트 */
@@ -684,6 +713,14 @@ export class VerseInsertModal extends Modal {
   private toggleVerse(linkTarget: string) {
     if (this.selected.has(linkTarget)) this.selected.delete(linkTarget);
     else this.selected.add(linkTarget);
+    if (this.keywordHits) {
+      // 대형 목록 재렌더링 없이 해당 체크박스만 동기화
+      const check = this.keywordChecks.get(linkTarget);
+      if (check) check.checked = this.selected.has(linkTarget);
+      this.updateInsertButton();
+      this.renderContext();
+      return;
+    }
     this.renderList();
     this.renderContext();
   }
@@ -714,6 +751,13 @@ export class VerseInsertModal extends Modal {
       this.focusInput();
       return;
     }
+    if (this.keywordHits) {
+      this.setKeywordHighlight(Math.min(next, count - 1));
+      this.listEl.focus();
+      this.renderContext();
+      this.keywordRows[this.highlight]?.scrollIntoView({ block: "nearest" });
+      return;
+    }
     this.highlight = Math.min(next, count - 1);
     this.listEl.focus();
     this.renderList();
@@ -723,8 +767,12 @@ export class VerseInsertModal extends Modal {
   }
 
   private focusInput() {
-    this.highlight = -1;
-    this.renderList();
+    if (this.keywordHits) {
+      this.setKeywordHighlight(-1);
+    } else {
+      this.highlight = -1;
+      this.renderList();
+    }
     this.inputEl.focus();
     this.inputEl.select();
   }
@@ -758,6 +806,14 @@ export class VerseInsertModal extends Modal {
     const allSelected = insertable.every((v) => this.selected.has(v.linkTarget));
     if (allSelected) this.selected.clear();
     else this.selected = new Set(insertable.map((v) => v.linkTarget));
+    if (this.keywordHits) {
+      // 렌더링된 체크박스만 동기화 (미렌더 청크는 생성 시 selected를 반영)
+      for (const [linkTarget, check] of this.keywordChecks) {
+        check.checked = this.selected.has(linkTarget) && !check.disabled;
+      }
+      this.updateInsertButton();
+      return;
+    }
     this.renderList();
   }
 
