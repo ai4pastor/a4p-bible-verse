@@ -2,6 +2,7 @@ import { Editor, Plugin } from "obsidian";
 import { BibleData } from "./bible-data";
 import { VerseInsertModal } from "./modal";
 import { BibleVerseSuggest } from "./suggest";
+import { VerseIndex } from "./verse-index";
 import {
   BibleVerseSettings,
   BibleVerseSettingTab,
@@ -15,11 +16,34 @@ interface PersistedState {
 export default class BibleVersePlugin extends Plugin {
   settings!: BibleVerseSettings;
   bibleData!: BibleData;
+  verseIndex!: VerseIndex;
 
   async onload() {
     await this.loadState();
     this.bibleData = new BibleData(this.app, () => this.settings.biblePath);
+    this.verseIndex = new VerseIndex(
+      this.app,
+      this.bibleData,
+      () => this.settings.biblePath,
+      `${this.manifest.dir ?? ".obsidian/plugins/a4p-bible-verse"}/verse-index.json`,
+    );
     this.addSettingTab(new BibleVerseSettingTab(this.app, this));
+
+    // 구절 노트 변경 시 인덱스 증분 갱신 (빌드 전에는 no-op)
+    this.registerEvent(
+      this.app.vault.on("modify", (f) => this.verseIndex.handleFileEvent(f, "modify")),
+    );
+    this.registerEvent(
+      this.app.vault.on("create", (f) => this.verseIndex.handleFileEvent(f, "create")),
+    );
+    this.registerEvent(
+      this.app.vault.on("delete", (f) => this.verseIndex.handleFileEvent(f, "delete")),
+    );
+    this.registerEvent(
+      this.app.vault.on("rename", (f, oldPath) =>
+        this.verseIndex.handleFileEvent(f, "rename", oldPath),
+      ),
+    );
 
     this.addCommand({
       id: "insert-bible-verse",

@@ -1,5 +1,5 @@
 import { App, TFile, TFolder } from "obsidian";
-import { BOOK_BY_ABBREV, BOOKS } from "./books";
+import { BOOK_BY_ABBREV, BOOKS, BookInfo } from "./books";
 import { extractVerseTexts, stripAnnotations } from "./note-parser";
 import { BibleReference, VerseData, Version } from "./types";
 
@@ -98,6 +98,37 @@ export class BibleData {
       if (m) max = Math.max(max, parseInt(m[1], 10));
     }
     return max;
+  }
+
+  /**
+   * 본문 인덱스 빌드용: 전체 구절 노트 파일을 정경 순(구약→신약, 장→절)으로 열거한다.
+   * BOOKS 배열이 정경 순이므로 반환 배열도 정렬 상태다.
+   */
+  enumerateVerseFiles():
+    | { ok: true; files: Array<{ file: TFile; book: BookInfo; chapter: number; verse: number }> }
+    | { ok: false; reason: string } {
+    const err = this.ensureFolderCache();
+    if (err) return { ok: false, reason: err };
+
+    const files: Array<{ file: TFile; book: BookInfo; chapter: number; verse: number }> = [];
+    for (const book of BOOKS) {
+      const folder = this.folderCache!.get(book.abbrev);
+      if (!folder) continue;
+      const re = new RegExp(`^${book.abbrev}(\\d+)_(\\d+)\\.md$`);
+      const inBook: Array<{ file: TFile; book: BookInfo; chapter: number; verse: number }> = [];
+      for (const child of folder.children) {
+        if (!(child instanceof TFile)) continue;
+        const m = child.name.match(re);
+        if (!m) continue;
+        inBook.push({ file: child, book, chapter: parseInt(m[1], 10), verse: parseInt(m[2], 10) });
+      }
+      inBook.sort((a, b) => a.chapter - b.chapter || a.verse - b.verse);
+      files.push(...inBook);
+    }
+    if (files.length === 0) {
+      return { ok: false, reason: "성경 폴더에서 구절 노트를 찾지 못했습니다." };
+    }
+    return { ok: true, files };
   }
 
   /** 설정 탭의 검증 버튼용: 경로·폴더 구조·샘플 절 읽기를 점검한다. */
