@@ -184,10 +184,14 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* 키워드 매칭 하이라이트 */
+/* 키워드 매칭 하이라이트 — 테마별 --text-highlight-bg는 글자색과 대비가
+   보장되지 않으므로, 모든 테마가 대비를 보장하는 액센트 쌍을 쓴다 */
 .bible-verse-match {
-  background: var(--text-highlight-bg);
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
   border-radius: 2px;
+  padding: 0 2px;
+  font-weight: var(--font-semibold);
 }
 
 /* 다른 역본 매칭 뱃지 (전체 역본 검색 시) */
