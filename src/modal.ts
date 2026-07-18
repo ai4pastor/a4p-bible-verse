@@ -13,6 +13,20 @@ const DEBOUNCE_MS = 150;
 /** 세션 내 마지막 사용 역본 (Obsidian 재시작 시 설정 기본값으로 리셋) */
 let sessionVersion: Version | null = null;
 
+interface PreviewOpts {
+  file: TFile;
+  title: string;
+  /** 있으면 해당 헤딩 섹션만 렌더 (주석 pericope) */
+  heading?: string;
+  /** 있으면 [검색] 버튼 노출 — 클릭 시 그 참조로 검색 전환 */
+  searchInput?: string;
+}
+
+/** 모달 내 뒤로가기 히스토리의 한 화면 — 미리보기 또는 검색 목록 */
+type NavState =
+  | { kind: "preview"; opts: PreviewOpts }
+  | { kind: "search"; query: string };
+
 export class VerseInsertModal extends Modal {
   private plugin: BibleVersePlugin;
   private data: BibleData;
@@ -29,6 +43,10 @@ export class VerseInsertModal extends Modal {
   /** 미리보기 렌더링 생명주기 관리 (모달 닫힐 때 unload) */
   private previewComponent = new Component();
   private previewOpen = false;
+  /** 현재 열려 있는 미리보기 (뒤로가기 히스토리 push용) */
+  private currentPreview: PreviewOpts | null = null;
+  /** 모달 내 뒤로가기 스택 — 마우스 뒤로가기·Esc가 이전 화면으로 복귀 */
+  private navStack: NavState[] = [];
 
   private version: Version;
   /** Cmd+클릭으로 고른 병렬 역본 (null이면 단일 역본 삽입) */
@@ -96,7 +114,7 @@ export class VerseInsertModal extends Modal {
     const footer = contentEl.createDiv({ cls: "bible-verse-footer" });
     footer.createDiv({
       cls: "bible-verse-hints",
-      text: "Enter 삽입 · ↓ 목록 · Space 선택 · Cmd+Enter 한 절(유지) · Tab 역본 · Cmd+Shift+C 복사",
+      text: "Enter 삽입 · ↓ 목록 · Space 선택 · Cmd+Enter 한 절(유지) · Tab 역본 · Cmd+Shift+C 복사 · 뒤로가기(⌘[) 이전 화면",
     });
     const btnGroup = footer.createDiv({ cls: "bible-verse-btn-group" });
     const copyBtn = btnGroup.createEl("button", { text: "복사" });
@@ -139,7 +157,9 @@ export class VerseInsertModal extends Modal {
     this.scope.register([], "Escape", (e) => {
       if (this.previewOpen) {
         e.preventDefault();
-        this.closePreview();
+        // 미리보기에서 Esc = 뒤로가기 (연쇄 미리보기는 한 단계씩 복귀)
+        if (this.navStack.length > 0) this.goBack();
+        else this.closePreview();
       } else if (this.highlight >= 0) {
         e.preventDefault();
         this.focusInput();
@@ -147,6 +167,20 @@ export class VerseInsertModal extends Modal {
         this.close();
       }
     });
+    // 옵시디언 탐색 뒤로가기 단축키를 모달 내 뒤로가기로 흡수
+    this.scope.register(["Mod"], "[", (e) => {
+      e.preventDefault();
+      this.goBack();
+    });
+    this.scope.register(["Mod", "Alt"], "ArrowLeft", (e) => {
+      e.preventDefault();
+      this.goBack();
+    });
+
+    // 마우스 뒤로가기(버튼 4)·앞으로가기(버튼 5) — 옵시디언 전역 탐색이
+    // 모달을 닫아버리지 않도록 캡처 단계에서 가로채 모달 내 뒤로가기로 연결
+    window.addEventListener("mousedown", this.onMouseNav, { capture: true });
+    window.addEventListener("mouseup", this.onMouseNav, { capture: true });
 
     this.renderEmptyState();
     this.inputEl.focus();
@@ -158,9 +192,48 @@ export class VerseInsertModal extends Modal {
   }
 
   onClose() {
+    window.removeEventListener("mousedown", this.onMouseNav, { capture: true });
+    window.removeEventListener("mouseup", this.onMouseNav, { capture: true });
     if (this.debounceTimer !== null) window.clearTimeout(this.debounceTimer);
     this.previewComponent.unload();
     this.contentEl.empty();
+  }
+
+  // ── 뒤로가기 (모달 내 히스토리) ────────────────────────
+
+  private onMouseNav = (e: MouseEvent) => {
+    if (e.button !== 3 && e.button !== 4) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (e.type === "mouseup" && e.button === 3) this.goBack();
+  };
+
+  /** 현재 화면(미리보기 또는 검색 목록)을 히스토리에 저장 — 화면 전환 직전에 호출 */
+  private pushNav() {
+    if (this.currentPreview) {
+      this.navStack.push({ kind: "preview", opts: this.currentPreview });
+    } else {
+      this.navStack.push({ kind: "search", query: this.inputEl.value });
+    }
+    if (this.navStack.length > 50) this.navStack.shift();
+  }
+
+  /** 이전 화면으로 복귀 — 미리보기 연쇄 → 검색 목록 → 이전 검색어 순으로 거슬러 간다 */
+  private goBack() {
+    const state = this.navStack.pop();
+    if (!state) {
+      // 히스토리가 없으면 미리보기만 닫는다 (모달은 유지)
+      if (this.previewOpen) this.closePreview();
+      return;
+    }
+    if (state.kind === "preview") {
+      void this.openPreview(state.opts, true);
+      return;
+    }
+    this.closePreview();
+    this.inputEl.value = state.query;
+    void this.runSearch();
+    this.inputEl.focus();
   }
 
   // ── 검색 ──────────────────────────────────────────────
@@ -173,7 +246,10 @@ export class VerseInsertModal extends Modal {
   private async runSearch() {
     const query = this.inputEl.value.trim();
     const id = ++this.requestId;
-    if (this.previewOpen) this.closePreview();
+    if (this.previewOpen) {
+      this.pushNav(); // 미리보기 중 새 검색 — 뒤로가기로 미리보기 복귀 가능하게
+      this.closePreview();
+    }
 
     if (!query) {
       this.ref = null;
@@ -491,15 +567,11 @@ export class VerseInsertModal extends Modal {
   /**
    * 칩 클릭 시 모달 안 우측 패널에 노트 내용을 렌더링한다.
    * [열기]로만 실제 이동하고, 미리보기 안의 위키링크 클릭은 연쇄 미리보기로 이어진다.
+   * fromNav=true면 뒤로가기 복귀라 히스토리에 push하지 않는다.
    */
-  private async openPreview(opts: {
-    file: TFile;
-    title: string;
-    /** 있으면 해당 헤딩 섹션만 렌더 (주석 pericope) */
-    heading?: string;
-    /** 있으면 [검색] 버튼 노출 — 클릭 시 그 참조로 검색 전환 */
-    searchInput?: string;
-  }) {
+  private async openPreview(opts: PreviewOpts, fromNav = false) {
+    if (!fromNav) this.pushNav();
+    this.currentPreview = opts;
     const { file, title, heading, searchInput } = opts;
     this.previewEl.empty();
     this.previewEl.addClass("is-open");
@@ -512,6 +584,7 @@ export class VerseInsertModal extends Modal {
     if (searchInput) {
       const searchBtn = actions.createEl("button", { text: "검색" });
       searchBtn.addEventListener("click", () => {
+        this.pushNav(); // 미리보기 → 검색 전환도 뒤로가기로 복귀 가능
         this.closePreview();
         this.inputEl.value = searchInput;
         void this.runSearch();
@@ -562,6 +635,7 @@ export class VerseInsertModal extends Modal {
     this.previewEl.removeClass("is-open");
     this.modalEl.removeClass("bible-verse-modal-expanded");
     this.previewOpen = false;
+    this.currentPreview = null;
   }
 
   /** Cmd 호버 시 옵시디언 페이지 미리보기 (hover-editor 설치 시 그쪽으로 연동) */
@@ -634,6 +708,8 @@ export class VerseInsertModal extends Modal {
       const file = this.app.metadataCache.getFirstLinkpathDest(target, "");
       if (!file) {
         // 노트가 없으면(비정규 링크) 검색 전환으로 폴백
+        // (미리보기가 열려 있으면 runSearch가 push하므로 여기선 목록 상태만 기록)
+        if (!this.previewOpen) this.pushNav();
         this.inputEl.value = ref ? `${ref.abbrev}${ref.chapter}:${ref.verseStart}` : target;
         void this.runSearch();
         this.inputEl.focus();
