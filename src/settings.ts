@@ -65,6 +65,7 @@ export class BibleVerseSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.biblePath = value.trim();
             this.plugin.bibleData.invalidate();
+            this.plugin.verseIndex.invalidate();
             await this.plugin.persist();
           }),
       )
@@ -143,6 +144,22 @@ export class BibleVerseSettingTab extends PluginSettingTab {
             await this.plugin.persist();
           }),
       );
+
+    new Setting(containerEl)
+      .setName("키워드 검색 대상 역본")
+      .setDesc(
+        "본문 키워드 검색(예: \"사랑 은혜\") 시 현재 선택한 역본에서만 찾을지, 5개 역본 전체에서 찾을지 정합니다. 첫 키워드 검색 시 인덱스 생성에 몇 초가 걸리며, 이후에는 캐시로 바로 검색됩니다.",
+      )
+      .addDropdown((drop) => {
+        drop.addOption("current", "현재 선택 역본만");
+        drop.addOption("all", "전체 5역본");
+        drop
+          .setValue(this.plugin.settings.keywordSearchScope)
+          .onChange(async (value) => {
+            this.plugin.settings.keywordSearchScope = value as "current" | "all";
+            await this.plugin.persist();
+          });
+      });
 
     new Setting(containerEl)
       .setName("각주 표기 정리")
