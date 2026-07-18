@@ -35,6 +35,7 @@ export class VerseInsertModal extends Modal {
 
   private inputEl!: HTMLInputElement;
   private backBtnEl!: HTMLButtonElement;
+  private footerBackBtnEl!: HTMLButtonElement;
   private statusEl!: HTMLElement;
   private versionBarEl!: HTMLElement;
   private listEl!: HTMLElement;
@@ -127,6 +128,10 @@ export class VerseInsertModal extends Modal {
       text: "Enter 삽입 · ↓ 목록 · Space 선택 · Cmd+Enter 한 절(유지) · Tab 역본 · Cmd+Shift+C 복사 · 뒤로가기(⌘[) 이전 화면",
     });
     const btnGroup = footer.createDiv({ cls: "bible-verse-btn-group" });
+    this.footerBackBtnEl = btnGroup.createEl("button", { text: "← 뒤로" });
+    this.footerBackBtnEl.title = "이전 화면으로 (⌘[ · 마우스 뒤로가기)";
+    this.footerBackBtnEl.tabIndex = -1;
+    this.footerBackBtnEl.addEventListener("click", () => this.goBack());
     const copyBtn = btnGroup.createEl("button", { text: "복사" });
     copyBtn.addEventListener("click", () => void this.copySelected());
     this.insertBtnEl = btnGroup.createEl("button", {
@@ -134,6 +139,7 @@ export class VerseInsertModal extends Modal {
       text: "삽입",
     });
     this.insertBtnEl.addEventListener("click", () => this.insertSelected(true));
+    this.updateBackButton();
 
     // 키 바인딩 (Scope)
     this.scope.register([], "Enter", (e) => {
@@ -248,10 +254,11 @@ export class VerseInsertModal extends Modal {
     this.inputEl.focus();
   }
 
-  /** 뒤로 갈 화면이 있을 때만 뒤로가기 버튼 활성화 */
+  /** 뒤로 갈 화면이 있을 때만 뒤로가기 버튼들(검색창 옆·푸터) 활성화 */
   private updateBackButton() {
-    if (!this.backBtnEl) return;
-    this.backBtnEl.disabled = this.navStack.length === 0;
+    const disabled = this.navStack.length === 0;
+    if (this.backBtnEl) this.backBtnEl.disabled = disabled;
+    if (this.footerBackBtnEl) this.footerBackBtnEl.disabled = disabled;
   }
 
   // ── 검색 ──────────────────────────────────────────────
