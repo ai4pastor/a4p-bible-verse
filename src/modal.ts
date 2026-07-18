@@ -30,7 +30,8 @@ type NavState =
 export class VerseInsertModal extends Modal {
   private plugin: BibleVersePlugin;
   private data: BibleData;
-  private editor: Editor;
+  /** null이면 복사 전용 모드 (편집기 없이 팔레트에서 실행) */
+  private editor: Editor | null;
 
   private inputEl!: HTMLInputElement;
   private statusEl!: HTMLElement;
@@ -66,7 +67,7 @@ export class VerseInsertModal extends Modal {
   private debounceTimer: number | null = null;
   private requestId = 0;
 
-  constructor(app: App, plugin: BibleVersePlugin, editor: Editor) {
+  constructor(app: App, plugin: BibleVersePlugin, editor: Editor | null) {
     super(app);
     this.plugin = plugin;
     this.data = plugin.bibleData;
@@ -779,9 +780,23 @@ export class VerseInsertModal extends Modal {
   }
 
   private updateInsertButton() {
+    if (!this.editor) {
+      this.insertBtnEl.setText("삽입");
+      this.insertBtnEl.disabled = true;
+      this.insertBtnEl.title = "편집 중인 노트가 없습니다 — 복사만 가능합니다";
+      return;
+    }
     const count = this.insertableVerses().length;
     this.insertBtnEl.setText(count > 0 ? `${count}절 삽입` : "삽입");
     this.insertBtnEl.disabled = count === 0;
+  }
+
+  /** 삽입 직전 편집기 확인 — 복사 전용 모드면 안내 후 null */
+  private requireEditor(): Editor | null {
+    if (!this.editor) {
+      new Notice("편집 중인 노트가 없어 삽입할 수 없습니다. 복사(Cmd+Shift+C)를 이용해주세요.");
+    }
+    return this.editor;
   }
 
   // ── 상태 조작 ─────────────────────────────────────────
@@ -948,6 +963,8 @@ export class VerseInsertModal extends Modal {
   }
 
   private insertSelected(close: boolean) {
+    const editor = this.requireEditor();
+    if (!editor) return;
     if (this.keywordHits) {
       const entries = this.selectedKeywordEntries();
       if (entries.length === 0) {
@@ -955,7 +972,7 @@ export class VerseInsertModal extends Modal {
         return;
       }
       const block = this.formatKeywordBlock(entries, "insert");
-      if (!insertBlock(this.app, block, this.editor)) return;
+      if (!insertBlock(this.app, block, editor)) return;
       if (close) this.close();
       return;
     }
@@ -976,7 +993,7 @@ export class VerseInsertModal extends Modal {
       format: this.plugin.settings.insertFormat,
       verseNewline: this.plugin.settings.verseNewline,
     });
-    if (!insertBlock(this.app, block, this.editor)) return;
+    if (!insertBlock(this.app, block, editor)) return;
     if (close) this.close();
   }
 
@@ -1013,6 +1030,8 @@ export class VerseInsertModal extends Modal {
 
   /** Cmd+Enter: 하이라이트된 절(기본 첫 절) 1개만 삽입하고 모달 유지 — 연속 삽입 모드 */
   private insertHighlighted() {
+    const editor = this.requireEditor();
+    if (!editor) return;
     if (this.keywordHits) {
       const idx = this.highlight >= 0 ? this.highlight : 0;
       const entry = this.keywordHits[idx]?.entry;
@@ -1022,7 +1041,7 @@ export class VerseInsertModal extends Modal {
         return;
       }
       const block = this.formatKeywordBlock([entry], "insert");
-      if (!insertBlock(this.app, block, this.editor)) return;
+      if (!insertBlock(this.app, block, editor)) return;
       new Notice(`${entry.bookName} ${entry.chapter}:${entry.verse} 삽입됨 (${this.version})`);
       this.focusInput();
       return;
@@ -1044,7 +1063,7 @@ export class VerseInsertModal extends Modal {
       format: this.plugin.settings.insertFormat,
       verseNewline: this.plugin.settings.verseNewline,
     });
-    if (!insertBlock(this.app, block, this.editor)) return;
+    if (!insertBlock(this.app, block, editor)) return;
     new Notice(`${this.ref.bookName} ${verse.chapter}:${verse.verse} 삽입됨 (${this.version})`);
     this.focusInput();
   }

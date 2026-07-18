@@ -1,4 +1,4 @@
-import { Editor, Plugin } from "obsidian";
+import { Plugin } from "obsidian";
 import { BibleData } from "./bible-data";
 import { VerseInsertModal } from "./modal";
 import { BibleVerseSuggest } from "./suggest";
@@ -48,7 +48,10 @@ export default class BibleVersePlugin extends Plugin {
     this.addCommand({
       id: "insert-bible-verse",
       name: "성경 구절 검색·삽입",
-      editorCallback: (editor: Editor) => {
+      // editorCallback을 쓰면 편집기가 없을 때 팔레트에서 커맨드가 사라진다 —
+      // 항상 노출하고, 편집기가 없으면 복사 전용 모드로 연다
+      callback: () => {
+        const editor = this.app.workspace.activeEditor?.editor ?? null;
         new VerseInsertModal(this.app, this, editor).open();
       },
     });
