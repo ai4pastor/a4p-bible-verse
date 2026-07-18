@@ -15,11 +15,27 @@
 }
 
 .bible-verse-input-wrap {
+  display: flex;
+  align-items: stretch;
+  gap: var(--size-4-2);
   padding-bottom: var(--size-4-2);
 }
 
+.bible-verse-back-btn {
+  flex-shrink: 0;
+  font-size: var(--font-ui-large);
+  padding: 0 var(--size-4-3);
+  cursor: pointer;
+}
+
+.bible-verse-back-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
 .bible-verse-input {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   font-size: var(--font-ui-large);
   padding: var(--size-4-3) var(--size-4-3);
 }
@@ -113,6 +129,14 @@
   gap: var(--size-4-2);
   padding-bottom: var(--size-4-2);
   border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.bible-verse-preview-back {
+  flex-shrink: 0;
+  font-size: var(--font-ui-small);
+  padding: 2px 8px;
+  height: auto;
+  cursor: pointer;
 }
 
 .bible-verse-preview-title {

@@ -34,6 +34,7 @@ export class VerseInsertModal extends Modal {
   private editor: Editor | null;
 
   private inputEl!: HTMLInputElement;
+  private backBtnEl!: HTMLButtonElement;
   private statusEl!: HTMLElement;
   private versionBarEl!: HTMLElement;
   private listEl!: HTMLElement;
@@ -80,14 +81,22 @@ export class VerseInsertModal extends Modal {
     const { contentEl } = this;
     contentEl.empty();
 
-    // 검색 입력
+    // 검색 입력 (+ 뒤로가기 버튼)
     const inputWrap = contentEl.createDiv({ cls: "bible-verse-input-wrap" });
+    this.backBtnEl = inputWrap.createEl("button", {
+      cls: "bible-verse-back-btn",
+      text: "←",
+    });
+    this.backBtnEl.title = "이전 화면으로 (⌘[ · 마우스 뒤로가기)";
+    this.backBtnEl.tabIndex = -1;
+    this.backBtnEl.addEventListener("click", () => this.goBack());
     this.inputEl = inputWrap.createEl("input", {
       type: "text",
       placeholder: "예: 요3:16 / 시23편 / 키워드(사랑 은혜)",
       cls: "bible-verse-input",
     });
     this.inputEl.addEventListener("input", () => this.scheduleSearch());
+    this.updateBackButton();
 
     // 상태줄 + 역본 세그먼트
     const statusRow = contentEl.createDiv({ cls: "bible-verse-status-row" });
@@ -217,11 +226,13 @@ export class VerseInsertModal extends Modal {
       this.navStack.push({ kind: "search", query: this.inputEl.value });
     }
     if (this.navStack.length > 50) this.navStack.shift();
+    this.updateBackButton();
   }
 
   /** 이전 화면으로 복귀 — 미리보기 연쇄 → 검색 목록 → 이전 검색어 순으로 거슬러 간다 */
   private goBack() {
     const state = this.navStack.pop();
+    this.updateBackButton();
     if (!state) {
       // 히스토리가 없으면 미리보기만 닫는다 (모달은 유지)
       if (this.previewOpen) this.closePreview();
@@ -235,6 +246,12 @@ export class VerseInsertModal extends Modal {
     this.inputEl.value = state.query;
     void this.runSearch();
     this.inputEl.focus();
+  }
+
+  /** 뒤로 갈 화면이 있을 때만 뒤로가기 버튼 활성화 */
+  private updateBackButton() {
+    if (!this.backBtnEl) return;
+    this.backBtnEl.disabled = this.navStack.length === 0;
   }
 
   // ── 검색 ──────────────────────────────────────────────
@@ -580,6 +597,13 @@ export class VerseInsertModal extends Modal {
     this.previewOpen = true;
 
     const header = this.previewEl.createDiv({ cls: "bible-verse-preview-header" });
+    const backBtn = header.createEl("button", {
+      cls: "bible-verse-preview-back",
+      text: "←",
+    });
+    backBtn.title = "이전 화면으로";
+    backBtn.tabIndex = -1;
+    backBtn.addEventListener("click", () => this.goBack());
     header.createSpan({ cls: "bible-verse-preview-title", text: title });
     const actions = header.createDiv({ cls: "bible-verse-preview-actions" });
     if (searchInput) {
