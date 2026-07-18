@@ -9,3 +9,6 @@ tests/fixtures/
 
 # 로컬 작업 메모 (세션 이어가기)
 docs/RESUME.md
+
+# 본문 키워드 검색 디스크 캐시 (역본 저작권 본문 포함) — dev vault 심볼릭 경유로 생성됨
+verse-index.json
