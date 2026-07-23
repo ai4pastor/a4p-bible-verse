@@ -1,5 +1,7 @@
-import { App, PluginSettingTab, Setting } from "obsidian";
+import { App, PluginSettingTab, Setting, normalizePath } from "obsidian";
 import type BibleVersePlugin from "./main";
+import { FolderSuggest } from "./folder-suggest";
+import { normalizeFolderPath } from "./paths";
 import { InsertFormat, VERSIONS, Version } from "./types";
 
 export interface BibleVerseSettings {
@@ -53,35 +55,17 @@ export class BibleVerseSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
-    let statusEl: HTMLElement;
-
-    new Setting(containerEl)
-      .setName("성경 폴더 경로")
-      .setDesc("볼트 루트 기준. 이 폴더 아래에 구약/신약 폴더가 있어야 합니다.")
-      .addText((text) =>
-        text
-          .setPlaceholder(DEFAULT_SETTINGS.biblePath)
-          .setValue(this.plugin.settings.biblePath)
-          .onChange(async (value) => {
-            this.plugin.settings.biblePath = value.trim();
-            this.plugin.bibleData.invalidate();
-            this.plugin.verseIndex.invalidate();
-            await this.plugin.persist();
-          }),
-      )
-      .addButton((btn) =>
-        btn
-          .setButtonText("검증")
-          .setCta()
-          .onClick(async () => {
-            btn.setDisabled(true);
-            const result = await this.plugin.bibleData.validate();
-            btn.setDisabled(false);
-            this.renderValidation(statusEl, result);
-          }),
-      );
-
-    statusEl = containerEl.createDiv({ cls: "bible-verse-settings-status" });
+    this.addFolderField(containerEl, {
+      name: "성경 폴더 경로",
+      desc: "성경 노트 패키지를 넣어둔 폴더를 선택하세요. 그 아래의 책 폴더(01.창세기 …)는 자동으로 찾습니다.",
+      getValue: () => this.plugin.settings.biblePath,
+      setValue: (v) => {
+        this.plugin.settings.biblePath = v;
+        this.plugin.bibleData.invalidate();
+        this.plugin.verseIndex.invalidate();
+      },
+      validate: () => this.plugin.bibleData.validate(),
+    });
 
     new Setting(containerEl)
       .setName("기본 역본")
@@ -175,35 +159,23 @@ export class BibleVerseSettingTab extends PluginSettingTab {
           }),
       );
 
-    new Setting(containerEl)
-      .setName("주석 폴더 경로")
-      .setDesc(
-        "성경 폴더 기준 상대 경로. 장 통합주석 노트가 있으면 모달에 주석 바로가기가 표시됩니다. 비우면 끕니다.",
-      )
-      .addText((text) =>
-        text
-          .setPlaceholder(DEFAULT_SETTINGS.commentaryPath)
-          .setValue(this.plugin.settings.commentaryPath)
-          .onChange(async (value) => {
-            this.plugin.settings.commentaryPath = value.trim();
-            await this.plugin.persist();
-          }),
-      );
+    this.addFolderField(containerEl, {
+      name: "주석 폴더 경로",
+      desc: "주석 노트 패키지를 넣어둔 폴더를 선택하세요. 성경 폴더와 다른 위치여도 됩니다. 장 통합주석 노트가 있으면 모달에 주석 바로가기가 표시됩니다. 비우면 주석 기능을 끕니다.",
+      getValue: () => this.plugin.settings.commentaryPath,
+      setValue: (v) => {
+        this.plugin.settings.commentaryPath = v;
+      },
+    });
 
-    new Setting(containerEl)
-      .setName("설교 폴더 경로")
-      .setDesc(
-        "검색한 구절을 인용한 설교를 이 폴더에서 찾아 모달에 보여줍니다. 비우면 성경 폴더를 제외한 전체 볼트에서 찾습니다.",
-      )
-      .addText((text) =>
-        text
-          .setPlaceholder(DEFAULT_SETTINGS.sermonFolder)
-          .setValue(this.plugin.settings.sermonFolder)
-          .onChange(async (value) => {
-            this.plugin.settings.sermonFolder = value.trim();
-            await this.plugin.persist();
-          }),
-      );
+    this.addFolderField(containerEl, {
+      name: "설교 폴더 경로",
+      desc: "검색한 구절을 인용한 설교를 이 폴더에서 찾아 모달에 보여줍니다. 비우면 성경·주석 폴더를 제외한 전체 볼트에서 찾습니다.",
+      getValue: () => this.plugin.settings.sermonFolder,
+      setValue: (v) => {
+        this.plugin.settings.sermonFolder = v;
+      },
+    });
 
     new Setting(containerEl).setName("병렬 삽입 (이중 역본)").setHeading();
 
@@ -247,6 +219,49 @@ export class BibleVerseSettingTab extends PluginSettingTab {
             await this.plugin.persist();
           });
       });
+  }
+
+  /** 폴더 경로 설정 공통 필드 — 자동완성 + 정규화 + (선택) 검증 버튼. */
+  private addFolderField(
+    containerEl: HTMLElement,
+    opts: {
+      name: string;
+      desc: string;
+      getValue: () => string;
+      setValue: (v: string) => void;
+      validate?: () => Promise<{ ok: boolean; messages: string[] }>;
+    },
+  ): void {
+    let statusEl: HTMLElement | null = null;
+    const setting = new Setting(containerEl)
+      .setName(opts.name)
+      .setDesc(opts.desc)
+      .addText((text) => {
+        text
+          .setPlaceholder("클릭하면 폴더 목록이 나타납니다")
+          .setValue(opts.getValue())
+          .onChange(async (value) => {
+            const trimmed = value.trim();
+            // FolderSuggest가 선택 시 끝 슬래시를 붙이므로 저장값은 반드시 정규화
+            opts.setValue(trimmed ? normalizeFolderPath(normalizePath(trimmed)) : "");
+            await this.plugin.persist();
+          });
+        new FolderSuggest(this.app, text.inputEl);
+      });
+    if (opts.validate) {
+      setting.addButton((btn) =>
+        btn
+          .setButtonText("검증")
+          .setCta()
+          .onClick(async () => {
+            btn.setDisabled(true);
+            const result = await opts.validate!();
+            btn.setDisabled(false);
+            if (statusEl) this.renderValidation(statusEl, result);
+          }),
+      );
+    }
+    statusEl = containerEl.createDiv({ cls: "bible-verse-settings-status" });
   }
 
   private renderValidation(
