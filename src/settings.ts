@@ -5,7 +5,7 @@ import { normalizeFolderPath } from "./paths";
 import { InsertFormat, VERSIONS, Version } from "./types";
 
 export interface BibleVerseSettings {
-  /** 볼트 루트 기준 성경 폴더 경로 (하위에 구약/신약 폴더가 있어야 함) */
+  /** 볼트 루트 기준 성경 폴더 경로 — 빈 값이면 미설정. 하위 책 폴더는 자동 탐색 */
   biblePath: string;
   defaultVersion: Version;
   /** 삽입 형식 — 콜아웃 블록 vs 일반 텍스트(wikilink 유지) */
@@ -18,18 +18,19 @@ export interface BibleVerseSettings {
   parallelTrigger: string;
   /** 병렬 삽입에 쓸 역본 쌍 [주 역본, 병렬 역본] */
   parallelVersions: [Version, Version];
-  /** "인용한 설교"를 찾을 폴더 — 비우면 성경 폴더 제외 전체 볼트 */
+  /** "인용한 설교"를 찾을 폴더 — 비우면 성경·주석 폴더 제외 전체 볼트 */
   sermonFolder: string;
   /** 본문의 각주 마커·소제목(<...>, a) 등) 제거 여부 */
   stripAnnotations: boolean;
-  /** 성경 폴더 기준 주석 폴더 상대 경로 — 비우면 주석 기능 끔 */
+  /** 볼트 루트 기준 주석 폴더 경로 — 성경 폴더와 무관하게 지정. 비우면 주석 기능 끔 */
   commentaryPath: string;
   /** 키워드 본문 검색 대상 — "current": 현재 선택 역본만, "all": 5역본 전체 */
   keywordSearchScope: "current" | "all";
 }
 
 export const DEFAULT_SETTINGS: BibleVerseSettings = {
-  biblePath: "100. notes/170. 성경",
+  // 경로 3종은 의도적으로 빈 값 — 볼트마다 위치가 다르므로 사용자가 직접 선택한다
+  biblePath: "",
   defaultVersion: "새번역",
   insertFormat: "callout",
   verseNewline: true,
@@ -37,9 +38,9 @@ export const DEFAULT_SETTINGS: BibleVerseSettings = {
   suggestTrigger: ";;",
   parallelTrigger: ";;;",
   parallelVersions: ["새번역", "NIV"],
-  sermonFolder: "300. Sermons",
+  sermonFolder: "",
   stripAnnotations: false,
-  commentaryPath: "171. 성경주석",
+  commentaryPath: "",
   keywordSearchScope: "current",
 };
 
