@@ -1,6 +1,7 @@
-import { Plugin } from "obsidian";
+import { Plugin, TFolder } from "obsidian";
 import { BibleData } from "./bible-data";
 import { isUnderFolder, normalizeFolderPath } from "./paths";
+import { SETTINGS_VERSION, migrateSettings } from "./settings-migrate";
 import { VerseInsertModal } from "./modal";
 import { BibleVerseSuggest } from "./suggest";
 import { VerseIndex } from "./verse-index";
@@ -11,6 +12,8 @@ import {
 } from "./settings";
 
 interface PersistedState {
+  /** 설정 스키마 버전 — v0.7 이하 파일에는 없음(= v1) */
+  settingsVersion?: number;
   settings: BibleVerseSettings;
 }
 
@@ -18,6 +21,7 @@ export default class BibleVersePlugin extends Plugin {
   settings!: BibleVerseSettings;
   bibleData!: BibleData;
   verseIndex!: VerseIndex;
+  private loadedSettingsVersion = SETTINGS_VERSION;
 
   async onload() {
     await this.loadState();
@@ -76,6 +80,9 @@ export default class BibleVersePlugin extends Plugin {
       display: "A4P 성경구절",
       defaultMod: true,
     });
+
+    // 마이그레이션은 vault 트리가 완성된 뒤에만 (폴더 존재 판정이 필요)
+    this.app.workspace.onLayoutReady(() => void this.migrateIfNeeded());
   }
 
   onunload() {}
@@ -89,10 +96,30 @@ export default class BibleVersePlugin extends Plugin {
   async loadState() {
     const raw = ((await this.loadData()) ?? {}) as Partial<PersistedState>;
     this.settings = { ...DEFAULT_SETTINGS, ...(raw.settings ?? {}) };
+    // 저장된 설정이 없으면(신규 설치) 마이그레이션 불필요 — 최신 버전으로 간주
+    this.loadedSettingsVersion = raw.settings ? (raw.settingsVersion ?? 1) : SETTINGS_VERSION;
+  }
+
+  private async migrateIfNeeded() {
+    if (this.loadedSettingsVersion >= SETTINGS_VERSION) return;
+    const { settings, changed } = migrateSettings(this.settings, this.loadedSettingsVersion, {
+      folderExists: (p) =>
+        this.app.vault.getAbstractFileByPath(normalizeFolderPath(p)) instanceof TFolder,
+    });
+    this.settings = settings;
+    this.loadedSettingsVersion = SETTINGS_VERSION;
+    if (changed) {
+      this.bibleData.invalidate();
+      this.verseIndex.invalidate();
+    }
+    await this.persist();
   }
 
   async persist() {
-    const payload: PersistedState = { settings: this.settings };
+    const payload: PersistedState = {
+      settingsVersion: SETTINGS_VERSION,
+      settings: this.settings,
+    };
     await this.saveData(payload);
   }
 }
