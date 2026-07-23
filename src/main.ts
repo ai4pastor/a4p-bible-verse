@@ -20,7 +20,11 @@ export default class BibleVersePlugin extends Plugin {
 
   async onload() {
     await this.loadState();
-    this.bibleData = new BibleData(this.app, () => this.settings.biblePath);
+    this.bibleData = new BibleData(this.app, () => ({
+      biblePath: this.settings.biblePath,
+      commentaryPath: this.settings.commentaryPath,
+      sermonFolder: this.settings.sermonFolder,
+    }));
     this.verseIndex = new VerseIndex(
       this.app,
       this.bibleData,

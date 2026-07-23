@@ -1,7 +1,15 @@
 import { App, TFile, TFolder } from "obsidian";
-import { BOOK_BY_ABBREV, BOOKS, BookInfo } from "./books";
+import { BOOK_BY_ABBREV, BOOKS, BookInfo, bookByFolderName } from "./books";
 import { extractVerseTexts, stripAnnotations } from "./note-parser";
+import { matchBookFolders, normalizeFolderPath } from "./paths";
 import { BibleReference, VerseData, Version } from "./types";
+
+/** BibleData가 참조하는 폴더 경로 설정 묶음 (전부 볼트 루트 기준) */
+export interface PathSettings {
+  biblePath: string;
+  commentaryPath: string;
+  sermonFolder: string;
+}
 
 export interface LoadResult {
   verses: VerseData[];
@@ -27,13 +35,18 @@ function extractRefLinks(value: unknown): string[] {
 export class BibleData {
   private folderCache: Map<string, TFolder> | null = null;
   private chapterCache = new Map<string, number[]>();
+  private duplicateBookFolders: string[] = [];
 
   constructor(
     private app: App,
-    private getBiblePath: () => string,
+    private getPaths: () => PathSettings,
   ) {}
 
-  /** 설정(성경 폴더 경로) 변경 시 호출 */
+  private biblePath(): string {
+    return normalizeFolderPath(this.getPaths().biblePath);
+  }
+
+  /** 설정(폴더 경로) 변경 시 호출 */
   invalidate() {
     this.folderCache = null;
     this.chapterCache.clear();
@@ -42,30 +55,34 @@ export class BibleData {
   /** 책 약자 → 책 폴더 매핑을 lazy 구축. 실패 시 사용자 안내 문구 반환. */
   private ensureFolderCache(): string | null {
     if (this.folderCache) return null;
-    const basePath = this.getBiblePath().replace(/\/+$/, "");
-    if (!basePath) return "설정에서 성경 폴더를 먼저 지정해주세요.";
+    const basePath = this.biblePath();
+    if (!basePath) return "성경 폴더가 아직 설정되지 않았습니다. 설정 → A4P 성경구절에서 성경 폴더를 선택해주세요.";
     const base = this.app.vault.getAbstractFileByPath(basePath);
     if (!(base instanceof TFolder)) return `성경 폴더를 찾을 수 없습니다: "${basePath}"`;
 
-    const cache = new Map<string, TFolder>();
-    for (const testament of ["구약", "신약"]) {
-      const tFolder = base.children.find(
-        (c): c is TFolder => c instanceof TFolder && c.name === testament,
-      );
-      if (!tFolder) return `"${basePath}" 아래에 ${testament} 폴더가 없습니다.`;
-      for (const child of tFolder.children) {
+    // 구약/신약 같은 중간 폴더의 이름·개수와 무관하게 깊이 3까지 책 폴더를 찾는다.
+    // 책 폴더로 확정된 폴더 아래로는 내려가지 않는다 (절 파일 수천 개 스캔 방지).
+    const flat: Array<{ path: string; name: string; folder: TFolder }> = [];
+    const walk = (folder: TFolder, depth: number) => {
+      if (depth > 3) return;
+      for (const child of folder.children) {
         if (!(child instanceof TFolder)) continue;
-        const stripped = child.name.replace(/^\d+\./, "").trim();
-        for (const book of BOOK_BY_ABBREV.values()) {
-          if (book.name === stripped || book.aliases.includes(stripped)) {
-            cache.set(book.abbrev, child);
-            break;
-          }
-        }
+        flat.push({ path: child.path, name: child.name, folder: child });
+        if (!bookByFolderName(child.name)) walk(child, depth + 1);
       }
+    };
+    walk(base, 1);
+
+    const { byAbbrev, duplicates } = matchBookFolders(flat);
+    if (byAbbrev.size === 0) {
+      return `"${basePath}" 아래에서 성경 책 폴더(01.창세기 …)를 찾지 못했습니다. 성경 노트 패키지를 넣은 폴더를 정확히 선택했는지 확인해주세요.`;
     }
-    if (cache.size === 0) return `"${basePath}" 아래에서 성경 책 폴더를 찾지 못했습니다.`;
+
+    const byPath = new Map(flat.map((f) => [f.path, f.folder]));
+    const cache = new Map<string, TFolder>();
+    for (const [abbrev, path] of byAbbrev) cache.set(abbrev, byPath.get(path)!);
     this.folderCache = cache;
+    this.duplicateBookFolders = duplicates;
     return null;
   }
 
@@ -156,6 +173,12 @@ export class BibleData {
           `⚠️ ${testament} ${books.length}권 중 ${found.length}권 인식 — 누락: ${missing}`,
         );
       }
+    }
+
+    if (this.duplicateBookFolders.length > 0) {
+      messages.push(
+        `⚠️ 같은 책으로 인식되는 폴더가 2개 이상 있습니다 (먼저 찾은 폴더 사용): ${this.duplicateBookFolders.join(", ")}`,
+      );
     }
 
     const sample = await this.loadVerses({
@@ -300,7 +323,7 @@ export class BibleData {
     const book = BOOK_BY_ABBREV.get(abbrev);
     if (!folder || !book) return null;
 
-    const basePath = this.getBiblePath().replace(/\/+$/, "");
+    const basePath = this.biblePath();
     const path = `${basePath}/${commentaryPath.trim().replace(/\/+$/, "")}/${book.testament}/${folder.name}/${book.name} ${chapter}장 통합주석.md`;
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!(file instanceof TFile)) return null;
@@ -331,7 +354,7 @@ export class BibleData {
   citingNotes(versePaths: string[], sermonFolder: string): string[] {
     const targets = versePaths.filter(Boolean);
     if (targets.length === 0) return [];
-    const biblePrefix = this.getBiblePath().replace(/\/+$/, "") + "/";
+    const biblePrefix = this.biblePath() + "/";
     const folderPrefix = sermonFolder.trim().replace(/\/+$/, "");
     const links = this.app.metadataCache.resolvedLinks;
     const results: string[] = [];
