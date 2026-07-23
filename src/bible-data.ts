@@ -1,7 +1,7 @@
 import { App, TFile, TFolder } from "obsidian";
 import { BOOK_BY_ABBREV, BOOKS, BookInfo, bookByFolderName } from "./books";
 import { extractVerseTexts, stripAnnotations } from "./note-parser";
-import { matchBookFolders, normalizeFolderPath } from "./paths";
+import { buildCommentaryIndex, matchBookFolders, normalizeFolderPath } from "./paths";
 import { BibleReference, VerseData, Version } from "./types";
 
 /** BibleData가 참조하는 폴더 경로 설정 묶음 (전부 볼트 루트 기준) */
@@ -36,6 +36,8 @@ export class BibleData {
   private folderCache: Map<string, TFolder> | null = null;
   private chapterCache = new Map<string, number[]>();
   private duplicateBookFolders: string[] = [];
+  /** `${책이름}|${장}` → 통합주석 노트 경로 */
+  private commentaryIndex: Map<string, string> | null = null;
 
   constructor(
     private app: App,
@@ -46,10 +48,20 @@ export class BibleData {
     return normalizeFolderPath(this.getPaths().biblePath);
   }
 
+  private commentaryRoot(): string {
+    return normalizeFolderPath(this.getPaths().commentaryPath);
+  }
+
   /** 설정(폴더 경로) 변경 시 호출 */
   invalidate() {
     this.folderCache = null;
     this.chapterCache.clear();
+    this.commentaryIndex = null;
+  }
+
+  /** 주석 폴더 경로 변경·주석 파일 변동 시 호출 */
+  invalidateCommentary() {
+    this.commentaryIndex = null;
   }
 
   /** 책 약자 → 책 폴더 매핑을 lazy 구축. 실패 시 사용자 안내 문구 반환. */
@@ -306,25 +318,73 @@ export class BibleData {
     return { ok: true, result: { verses, notice } };
   }
 
+  /** 주석 폴더(볼트 루트 기준) 아래 전체 md 파일에서 통합주석 인덱스를 lazy 구축 */
+  private ensureCommentaryIndex(): Map<string, string> | null {
+    if (this.commentaryIndex) return this.commentaryIndex;
+    const root = this.commentaryRoot();
+    if (!root) return null;
+    const folder = this.app.vault.getAbstractFileByPath(root);
+    if (!(folder instanceof TFolder)) return null;
+    const files: Array<{ path: string; name: string }> = [];
+    const walk = (f: TFolder) => {
+      for (const child of f.children) {
+        if (child instanceof TFolder) walk(child);
+        else if (child instanceof TFile && child.extension === "md") {
+          files.push({ path: child.path, name: child.name });
+        }
+      }
+    };
+    walk(folder);
+    this.commentaryIndex = buildCommentaryIndex(files);
+    return this.commentaryIndex;
+  }
+
+  /** 설정 탭의 주석 폴더 검증 버튼용 */
+  async validateCommentary(): Promise<{ ok: boolean; messages: string[] }> {
+    const root = this.commentaryRoot();
+    if (!root) {
+      return {
+        ok: false,
+        messages: [
+          "주석 폴더가 설정되지 않았습니다. 비워두면 주석 바로가기 없이 다른 기능은 정상 작동합니다.",
+        ],
+      };
+    }
+    const folder = this.app.vault.getAbstractFileByPath(root);
+    if (!(folder instanceof TFolder)) {
+      return { ok: false, messages: [`주석 폴더를 찾을 수 없습니다: "${root}"`] };
+    }
+    this.commentaryIndex = null;
+    const index = this.ensureCommentaryIndex()!;
+    if (index.size === 0) {
+      return {
+        ok: false,
+        messages: [
+          `⚠️ 폴더는 있지만 "책이름 N장 통합주석.md" 형식의 노트를 찾지 못했습니다: "${root}"`,
+        ],
+      };
+    }
+    const bookCount = new Set([...index.keys()].map((k) => k.split("|")[0])).size;
+    return { ok: true, messages: [`✅ 통합주석 노트 ${index.size}개 인식 (${bookCount}권)`] };
+  }
+
   /**
    * 해당 절이 속한 장 통합주석 노트와 pericope 헤딩을 찾는다.
-   * 경로: {성경폴더}/{주석폴더}/{구약|신약}/{NN.책이름}/{책이름} {장}장 통합주석.md
+   * 주석 폴더 아래를 파일명("{책이름} {N}장 통합주석.md")으로 인덱싱하므로
+   * 내부 폴더 구조(구약/신약 층, 책 폴더명)와 무관하게 동작한다.
    * 헤딩: "## 3:14-17 - 제목" 중 절이 범위에 포함되는 것.
    */
   findCommentary(
     abbrev: string,
     chapter: number,
     verse: number | null,
-    commentaryPath: string,
   ): { path: string; heading?: string; label: string } | null {
-    if (!commentaryPath.trim()) return null;
-    if (this.ensureFolderCache() !== null) return null;
-    const folder = this.folderCache!.get(abbrev);
     const book = BOOK_BY_ABBREV.get(abbrev);
-    if (!folder || !book) return null;
-
-    const basePath = this.biblePath();
-    const path = `${basePath}/${commentaryPath.trim().replace(/\/+$/, "")}/${book.testament}/${folder.name}/${book.name} ${chapter}장 통합주석.md`;
+    if (!book) return null;
+    const index = this.ensureCommentaryIndex();
+    if (!index) return null;
+    const path = index.get(`${book.name}|${chapter}`);
+    if (!path) return null;
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!(file instanceof TFile)) return null;
 

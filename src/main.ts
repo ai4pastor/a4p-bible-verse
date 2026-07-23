@@ -1,5 +1,6 @@
 import { Plugin } from "obsidian";
 import { BibleData } from "./bible-data";
+import { isUnderFolder, normalizeFolderPath } from "./paths";
 import { VerseInsertModal } from "./modal";
 import { BibleVerseSuggest } from "./suggest";
 import { VerseIndex } from "./verse-index";
@@ -34,19 +35,28 @@ export default class BibleVersePlugin extends Plugin {
     this.addSettingTab(new BibleVerseSettingTab(this.app, this));
 
     // 구절 노트 변경 시 인덱스 증분 갱신 (빌드 전에는 no-op)
+    // 주석 폴더 내 파일 변동 시 주석 인덱스도 무효화
     this.registerEvent(
       this.app.vault.on("modify", (f) => this.verseIndex.handleFileEvent(f, "modify")),
     );
     this.registerEvent(
-      this.app.vault.on("create", (f) => this.verseIndex.handleFileEvent(f, "create")),
+      this.app.vault.on("create", (f) => {
+        this.verseIndex.handleFileEvent(f, "create");
+        this.touchCommentary(f.path);
+      }),
     );
     this.registerEvent(
-      this.app.vault.on("delete", (f) => this.verseIndex.handleFileEvent(f, "delete")),
+      this.app.vault.on("delete", (f) => {
+        this.verseIndex.handleFileEvent(f, "delete");
+        this.touchCommentary(f.path);
+      }),
     );
     this.registerEvent(
-      this.app.vault.on("rename", (f, oldPath) =>
-        this.verseIndex.handleFileEvent(f, "rename", oldPath),
-      ),
+      this.app.vault.on("rename", (f, oldPath) => {
+        this.verseIndex.handleFileEvent(f, "rename", oldPath);
+        this.touchCommentary(f.path);
+        this.touchCommentary(oldPath);
+      }),
     );
 
     this.addCommand({
@@ -69,6 +79,12 @@ export default class BibleVersePlugin extends Plugin {
   }
 
   onunload() {}
+
+  /** 주석 폴더 하위 파일 변동이면 주석 인덱스 무효화 */
+  private touchCommentary(path: string) {
+    const root = normalizeFolderPath(this.settings.commentaryPath);
+    if (root && isUnderFolder(path, root)) this.bibleData.invalidateCommentary();
+  }
 
   async loadState() {
     const raw = ((await this.loadData()) ?? {}) as Partial<PersistedState>;

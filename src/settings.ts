@@ -166,7 +166,9 @@ export class BibleVerseSettingTab extends PluginSettingTab {
       getValue: () => this.plugin.settings.commentaryPath,
       setValue: (v) => {
         this.plugin.settings.commentaryPath = v;
+        this.plugin.bibleData.invalidateCommentary();
       },
+      validate: () => this.plugin.bibleData.validateCommentary(),
     });
 
     this.addFolderField(containerEl, {

@@ -765,7 +765,6 @@ export class VerseInsertModal extends Modal {
       verse.linkTarget.match(/^[가-힣]+/)?.[0] ?? "",
       verse.chapter,
       verse.verse,
-      this.plugin.settings.commentaryPath,
     );
     if (commentary) {
       const row = this.contextEl.createDiv({ cls: "bible-verse-context-row" });
