@@ -178,6 +178,7 @@ export class BibleVerseSettingTab extends PluginSettingTab {
       setValue: (v) => {
         this.plugin.settings.sermonFolder = v;
       },
+      validate: () => this.plugin.bibleData.validateSermonFolder(),
     });
 
     new Setting(containerEl).setName("병렬 삽입 (이중 역본)").setHeading();

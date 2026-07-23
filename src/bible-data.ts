@@ -1,7 +1,12 @@
 import { App, TFile, TFolder } from "obsidian";
 import { BOOK_BY_ABBREV, BOOKS, BookInfo, bookByFolderName } from "./books";
 import { extractVerseTexts, stripAnnotations } from "./note-parser";
-import { buildCommentaryIndex, matchBookFolders, normalizeFolderPath } from "./paths";
+import {
+  buildCommentaryIndex,
+  isUnderFolder,
+  matchBookFolders,
+  normalizeFolderPath,
+} from "./paths";
 import { BibleReference, VerseData, Version } from "./types";
 
 /** BibleData가 참조하는 폴더 경로 설정 묶음 (전부 볼트 루트 기준) */
@@ -406,21 +411,43 @@ export class BibleData {
     return { path, label: fallbackLabel };
   }
 
+  /** 설정 탭의 설교 폴더 검증 버튼용 */
+  async validateSermonFolder(): Promise<{ ok: boolean; messages: string[] }> {
+    const root = normalizeFolderPath(this.getPaths().sermonFolder);
+    if (!root) {
+      return {
+        ok: true,
+        messages: [
+          "설교 폴더가 비어 있습니다 — 성경·주석 폴더를 제외한 전체 볼트에서 인용을 찾습니다.",
+        ],
+      };
+    }
+    const folder = this.app.vault.getAbstractFileByPath(root);
+    if (!(folder instanceof TFolder)) {
+      return { ok: false, messages: [`설교 폴더를 찾을 수 없습니다: "${root}"`] };
+    }
+    const count = this.app.vault
+      .getMarkdownFiles()
+      .filter((f) => isUnderFolder(f.path, root)).length;
+    return { ok: true, messages: [`✅ 설교 폴더 인식 — 노트 ${count}개`] };
+  }
+
   /**
    * 주어진 구절 노트들을 인용(링크)한 노트 경로 목록.
-   * sermonFolder가 있으면 그 폴더 안에서만, 없으면 성경 폴더 제외 전체에서 찾는다.
+   * 설교 폴더가 있으면 그 안에서만, 없으면 성경·주석 폴더 제외 전체에서 찾는다.
    * 날짜 접두 파일명이 최신순이 되도록 경로 내림차순 정렬.
    */
-  citingNotes(versePaths: string[], sermonFolder: string): string[] {
+  citingNotes(versePaths: string[]): string[] {
     const targets = versePaths.filter(Boolean);
     if (targets.length === 0) return [];
-    const biblePrefix = this.biblePath() + "/";
-    const folderPrefix = sermonFolder.trim().replace(/\/+$/, "");
+    // 주석 노트는 구절을 대량 링크하므로 "인용한 설교"에서 제외
+    const excludes = [this.biblePath(), this.commentaryRoot()].filter(Boolean);
+    const sermonRoot = normalizeFolderPath(this.getPaths().sermonFolder);
     const links = this.app.metadataCache.resolvedLinks;
     const results: string[] = [];
     for (const source in links) {
-      if (source.startsWith(biblePrefix)) continue;
-      if (folderPrefix && !source.startsWith(folderPrefix + "/")) continue;
+      if (excludes.some((p) => isUnderFolder(source, p))) continue;
+      if (sermonRoot && !isUnderFolder(source, sermonRoot)) continue;
       const linkedTargets = links[source];
       for (const p of targets) {
         if (linkedTargets[p]) {

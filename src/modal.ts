@@ -331,10 +331,7 @@ export class VerseInsertModal extends Modal {
     this.keywordHits = null;
     this.selected = new Set(outcome.result.verses.map((v) => v.linkTarget));
     this.highlight = -1;
-    this.citing = this.data.citingNotes(
-      outcome.result.verses.map((v) => v.path ?? ""),
-      this.plugin.settings.sermonFolder,
-    );
+    this.citing = this.data.citingNotes(outcome.result.verses.map((v) => v.path ?? ""));
 
     const label = formatReference(parsed.ref);
     const count = outcome.result.verses.length;
@@ -714,10 +711,7 @@ export class VerseInsertModal extends Modal {
     if (current !== hit) return;
     if (!outcome.ok || !outcome.result.verses[0]) return;
     const verse = outcome.result.verses[0];
-    this.citing = this.data.citingNotes(
-      [verse.path ?? ""],
-      this.plugin.settings.sermonFolder,
-    );
+    this.citing = this.data.citingNotes([verse.path ?? ""]);
     this.contextEl.empty();
     this.renderContextFor(verse);
   }
