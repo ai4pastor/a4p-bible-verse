@@ -11,7 +11,8 @@ import { BibleReference, VerseData, Version } from "./types";
 
 /** BibleData가 참조하는 폴더 경로 설정 묶음 (전부 볼트 루트 기준) */
 export interface PathSettings {
-  biblePath: string;
+  otPath: string;
+  ntPath: string;
   commentaryPath: string;
   sermonFolder: string;
 }
@@ -49,8 +50,12 @@ export class BibleData {
     private getPaths: () => PathSettings,
   ) {}
 
-  private biblePath(): string {
-    return normalizeFolderPath(this.getPaths().biblePath);
+  private otPath(): string {
+    return normalizeFolderPath(this.getPaths().otPath);
+  }
+
+  private ntPath(): string {
+    return normalizeFolderPath(this.getPaths().ntPath);
   }
 
   private commentaryRoot(): string {
@@ -72,27 +77,38 @@ export class BibleData {
   /** 책 약자 → 책 폴더 매핑을 lazy 구축. 실패 시 사용자 안내 문구 반환. */
   private ensureFolderCache(): string | null {
     if (this.folderCache) return null;
-    const basePath = this.biblePath();
-    if (!basePath) return "성경 폴더가 아직 설정되지 않았습니다. 설정 → A4P 성경구절에서 성경 폴더를 선택해주세요.";
-    const base = this.app.vault.getAbstractFileByPath(basePath);
-    if (!(base instanceof TFolder)) return `성경 폴더를 찾을 수 없습니다: "${basePath}"`;
+    const roots = [
+      { label: "구약", path: this.otPath() },
+      { label: "신약", path: this.ntPath() },
+    ];
+    if (!roots.some((r) => r.path)) {
+      return "성경 폴더가 아직 설정되지 않았습니다. 설정 → A4P 성경구절에서 구약·신약 성경 폴더를 선택해주세요.";
+    }
 
-    // 구약/신약 같은 중간 폴더의 이름·개수와 무관하게 깊이 3까지 책 폴더를 찾는다.
+    // 중간 폴더의 이름·개수와 무관하게 각 루트에서 깊이 3까지 책 폴더를 찾는다.
     // 책 폴더로 확정된 폴더 아래로는 내려가지 않는다 (절 파일 수천 개 스캔 방지).
+    // 두 루트가 같거나 겹쳐도 visited로 중복 수집을 막는다.
     const flat: Array<{ path: string; name: string; folder: TFolder }> = [];
+    const visited = new Set<string>();
     const walk = (folder: TFolder, depth: number) => {
       if (depth > 3) return;
       for (const child of folder.children) {
-        if (!(child instanceof TFolder)) continue;
+        if (!(child instanceof TFolder) || visited.has(child.path)) continue;
+        visited.add(child.path);
         flat.push({ path: child.path, name: child.name, folder: child });
         if (!bookByFolderName(child.name)) walk(child, depth + 1);
       }
     };
-    walk(base, 1);
+    for (const r of roots) {
+      if (!r.path) continue;
+      const base = this.app.vault.getAbstractFileByPath(r.path);
+      if (!(base instanceof TFolder)) return `${r.label} 성경 폴더를 찾을 수 없습니다: "${r.path}"`;
+      walk(base, 1);
+    }
 
     const { byAbbrev, duplicates } = matchBookFolders(flat);
     if (byAbbrev.size === 0) {
-      return `"${basePath}" 아래에서 성경 책 폴더(01.창세기 …)를 찾지 못했습니다. 성경 노트 패키지를 넣은 폴더를 정확히 선택했는지 확인해주세요.`;
+      return "설정한 성경 폴더 아래에서 책 폴더(01.창세기 …)를 찾지 못했습니다. 성경 노트 패키지를 넣은 폴더를 정확히 선택했는지 확인해주세요.";
     }
 
     const byPath = new Map(flat.map((f) => [f.path, f.folder]));
@@ -165,8 +181,16 @@ export class BibleData {
     return { ok: true, files };
   }
 
-  /** 설정 탭의 검증 버튼용: 경로·폴더 구조·샘플 절 읽기를 점검한다. */
-  async validate(): Promise<{ ok: boolean; messages: string[] }> {
+  /** 설정 탭의 구약/신약 폴더 검증 버튼용: 경로·책 폴더 인식·샘플 절 읽기를 점검한다. */
+  async validateTestament(testament: "구약" | "신약"): Promise<{ ok: boolean; messages: string[] }> {
+    const path = testament === "구약" ? this.otPath() : this.ntPath();
+    if (!path) {
+      return {
+        ok: false,
+        messages: [`${testament} 성경 폴더가 아직 설정되지 않았습니다. 폴더를 선택한 뒤 다시 검증해주세요.`],
+      };
+    }
+
     this.invalidate();
     const err = this.ensureFolderCache();
     if (err) return { ok: false, messages: [err] };
@@ -175,21 +199,19 @@ export class BibleData {
     const messages: string[] = [];
     let ok = true;
 
-    for (const testament of ["구약", "신약"] as const) {
-      const books = BOOKS.filter((b) => b.testament === testament);
-      const found = books.filter((b) => cache.has(b.abbrev));
-      if (found.length === books.length) {
-        messages.push(`✅ ${testament} ${books.length}권 모두 인식됨`);
-      } else {
-        ok = false;
-        const missing = books
-          .filter((b) => !cache.has(b.abbrev))
-          .map((b) => b.name)
-          .join(", ");
-        messages.push(
-          `⚠️ ${testament} ${books.length}권 중 ${found.length}권 인식 — 누락: ${missing}`,
-        );
-      }
+    const books = BOOKS.filter((b) => b.testament === testament);
+    const found = books.filter((b) => cache.has(b.abbrev));
+    if (found.length === books.length) {
+      messages.push(`✅ ${testament} ${books.length}권 모두 인식됨`);
+    } else {
+      ok = false;
+      const missing = books
+        .filter((b) => !cache.has(b.abbrev))
+        .map((b) => b.name)
+        .join(", ");
+      messages.push(
+        `⚠️ ${testament} ${books.length}권 중 ${found.length}권 인식 — 누락: ${missing}`,
+      );
     }
 
     if (this.duplicateBookFolders.length > 0) {
@@ -198,24 +220,25 @@ export class BibleData {
       );
     }
 
-    const sample = await this.loadVerses({
-      abbrev: "창",
-      bookName: "창세기",
-      chapter: 1,
-      verseStart: 1,
-      verseEnd: 1,
-    });
+    const sampleRef =
+      testament === "구약"
+        ? { abbrev: "창", bookName: "창세기", chapter: 1, verseStart: 1, verseEnd: 1 }
+        : { abbrev: "요", bookName: "요한복음", chapter: 3, verseStart: 16, verseEnd: 16 };
+    const sampleName = `${sampleRef.abbrev}${sampleRef.chapter}_${sampleRef.verseStart}`;
+    const sample = await this.loadVerses(sampleRef);
     if (sample.ok && sample.result.verses[0]) {
       const versions = Object.keys(sample.result.verses[0].texts).length;
       if (versions > 0) {
-        messages.push(`✅ 샘플 구절(창1_1) 읽기 성공 — 역본 ${versions}개 확인`);
+        messages.push(`✅ 샘플 구절(${sampleName}) 읽기 성공 — 역본 ${versions}개 확인`);
       } else {
         ok = false;
-        messages.push("⚠️ 창1_1.md를 읽었지만 역본 콜아웃을 찾지 못했습니다 (노트 형식 확인 필요)");
+        messages.push(
+          `⚠️ ${sampleName}.md를 읽었지만 역본 콜아웃을 찾지 못했습니다 (노트 형식 확인 필요)`,
+        );
       }
     } else {
       ok = false;
-      messages.push("⚠️ 샘플 구절(창1_1.md)을 읽지 못했습니다");
+      messages.push(`⚠️ 샘플 구절(${sampleName}.md)을 읽지 못했습니다`);
     }
 
     return { ok, messages };
@@ -441,7 +464,7 @@ export class BibleData {
     const targets = versePaths.filter(Boolean);
     if (targets.length === 0) return [];
     // 주석 노트는 구절을 대량 링크하므로 "인용한 설교"에서 제외
-    const excludes = [this.biblePath(), this.commentaryRoot()].filter(Boolean);
+    const excludes = [this.otPath(), this.ntPath(), this.commentaryRoot()].filter(Boolean);
     const sermonRoot = normalizeFolderPath(this.getPaths().sermonFolder);
     const links = this.app.metadataCache.resolvedLinks;
     const results: string[] = [];

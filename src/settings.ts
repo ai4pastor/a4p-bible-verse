@@ -5,8 +5,12 @@ import { normalizeFolderPath } from "./paths";
 import { InsertFormat, VERSIONS, Version } from "./types";
 
 export interface BibleVerseSettings {
-  /** 볼트 루트 기준 성경 폴더 경로 — 빈 값이면 미설정. 하위 책 폴더는 자동 탐색 */
-  biblePath: string;
+  /** 볼트 루트 기준 구약 성경 폴더 경로 — 빈 값이면 미설정. 하위 책 폴더는 자동 탐색 */
+  otPath: string;
+  /** 볼트 루트 기준 신약 성경 폴더 경로 — 빈 값이면 미설정. 하위 책 폴더는 자동 탐색 */
+  ntPath: string;
+  /** @deprecated v2 이하의 단일 성경 폴더 경로 — 마이그레이션에서 otPath/ntPath로 흡수 후 제거 */
+  biblePath?: string;
   defaultVersion: Version;
   /** 삽입 형식 — 콜아웃 블록 vs 일반 텍스트(wikilink 유지) */
   insertFormat: InsertFormat;
@@ -29,8 +33,9 @@ export interface BibleVerseSettings {
 }
 
 export const DEFAULT_SETTINGS: BibleVerseSettings = {
-  // 경로 3종은 의도적으로 빈 값 — 볼트마다 위치가 다르므로 사용자가 직접 선택한다
-  biblePath: "",
+  // 경로는 의도적으로 빈 값 — 볼트마다 위치가 다르므로 사용자가 직접 선택한다
+  otPath: "",
+  ntPath: "",
   defaultVersion: "새번역",
   insertFormat: "callout",
   verseNewline: true,
@@ -57,15 +62,27 @@ export class BibleVerseSettingTab extends PluginSettingTab {
     containerEl.empty();
 
     this.addFolderField(containerEl, {
-      name: "성경 폴더 경로",
-      desc: "성경 노트 패키지를 넣어둔 폴더를 선택하세요. 그 아래의 책 폴더(01.창세기 …)는 자동으로 찾습니다.",
-      getValue: () => this.plugin.settings.biblePath,
+      name: "구약 성경 폴더",
+      desc: "구약 성경 노트를 넣어둔 폴더를 선택하세요. 그 아래의 책 폴더(01.창세기 …)는 자동으로 찾습니다.",
+      getValue: () => this.plugin.settings.otPath,
       setValue: (v) => {
-        this.plugin.settings.biblePath = v;
+        this.plugin.settings.otPath = v;
         this.plugin.bibleData.invalidate();
         this.plugin.verseIndex.invalidate();
       },
-      validate: () => this.plugin.bibleData.validate(),
+      validate: () => this.plugin.bibleData.validateTestament("구약"),
+    });
+
+    this.addFolderField(containerEl, {
+      name: "신약 성경 폴더",
+      desc: "신약 성경 노트를 넣어둔 폴더를 선택하세요. 그 아래의 책 폴더(01.마태복음 …)는 자동으로 찾습니다.",
+      getValue: () => this.plugin.settings.ntPath,
+      setValue: (v) => {
+        this.plugin.settings.ntPath = v;
+        this.plugin.bibleData.invalidate();
+        this.plugin.verseIndex.invalidate();
+      },
+      validate: () => this.plugin.bibleData.validateTestament("신약"),
     });
 
     new Setting(containerEl)

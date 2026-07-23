@@ -202,9 +202,9 @@ export class VerseInsertModal extends Modal {
     this.inputEl.focus();
 
     // 폴더 미설정 조기 안내
-    if (!this.plugin.settings.biblePath.trim()) {
+    if (!this.plugin.settings.otPath.trim() && !this.plugin.settings.ntPath.trim()) {
       this.setStatus(
-        "성경 폴더가 아직 설정되지 않았습니다. 설정 → A4P 성경구절에서 성경 폴더를 선택해주세요.",
+        "성경 폴더가 아직 설정되지 않았습니다. 설정 → A4P 성경구절에서 구약·신약 성경 폴더를 선택해주세요.",
         "error",
       );
     }

@@ -26,14 +26,15 @@ export default class BibleVersePlugin extends Plugin {
   async onload() {
     await this.loadState();
     this.bibleData = new BibleData(this.app, () => ({
-      biblePath: this.settings.biblePath,
+      otPath: this.settings.otPath,
+      ntPath: this.settings.ntPath,
       commentaryPath: this.settings.commentaryPath,
       sermonFolder: this.settings.sermonFolder,
     }));
     this.verseIndex = new VerseIndex(
       this.app,
       this.bibleData,
-      () => this.settings.biblePath,
+      () => [this.settings.otPath, this.settings.ntPath],
       `${this.manifest.dir ?? ".obsidian/plugins/a4p-bible-verse"}/verse-index.json`,
     );
     this.addSettingTab(new BibleVerseSettingTab(this.app, this));

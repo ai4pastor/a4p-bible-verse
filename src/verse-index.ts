@@ -16,6 +16,7 @@ import { IndexEntry, Version } from "./types";
  */
 
 // v2: biblePath가 정규화된 경로로 기록되고 책 폴더 재귀 탐색으로 인식 집합이 달라질 수 있음
+// (구약/신약 분리 후에는 biblePath에 두 루트를 "\n"으로 이어 기록 — 값이 달라지면 자동 재빌드)
 const SCHEMA_VERSION = 2;
 /** 청크 크기 — 청크마다 이벤트 루프에 양보해 UI 프리즈를 막는다 */
 const CHUNK_SIZE = 200;
@@ -51,9 +52,14 @@ export class VerseIndex {
   constructor(
     private app: App,
     private data: BibleData,
-    private getBiblePath: () => string,
+    private getBiblePaths: () => string[],
     private cacheFilePath: string,
   ) {}
+
+  /** 정규화된 성경 루트 경로들 (구약·신약, 빈 값 제외) */
+  private basePaths(): string[] {
+    return this.getBiblePaths().map(normalizeFolderPath).filter(Boolean);
+  }
 
   get status(): IndexStatus {
     return this._status;
@@ -106,7 +112,7 @@ export class VerseIndex {
 
     const meta: CacheMeta = {
       schemaVersion: SCHEMA_VERSION,
-      biblePath: normalizeFolderPath(this.getBiblePath()),
+      biblePath: this.basePaths().join("\n"),
       fileCount: files.length,
       maxMtime: files.reduce((max, f) => Math.max(max, f.file.stat.mtime), 0),
     };
@@ -212,8 +218,8 @@ export class VerseIndex {
   private parseVersePath(
     path: string,
   ): { book: BookInfo; chapter: number; verse: number } | null {
-    const base = normalizeFolderPath(this.getBiblePath());
-    if (!base || !isUnderFolder(path, base)) return null;
+    const bases = this.basePaths();
+    if (bases.length === 0 || !bases.some((b) => isUnderFolder(path, b))) return null;
     const name = path.split("/").pop() ?? "";
     const m = name.match(VERSE_FILE_RE);
     if (!m) return null;
