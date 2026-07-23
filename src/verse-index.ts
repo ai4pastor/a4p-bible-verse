@@ -2,6 +2,7 @@ import { App, Platform, TAbstractFile, TFile } from "obsidian";
 import { BibleData } from "./bible-data";
 import { BOOK_BY_ABBREV, BookInfo } from "./books";
 import { extractVerseTexts } from "./note-parser";
+import { isUnderFolder, normalizeFolderPath } from "./paths";
 import { normalizeText } from "./search";
 import { IndexEntry, Version } from "./types";
 
@@ -14,7 +15,8 @@ import { IndexEntry, Version } from "./types";
  * - 세션 내 증분 갱신: vault 파일 이벤트로 해당 절만 재파싱
  */
 
-const SCHEMA_VERSION = 1;
+// v2: biblePath가 정규화된 경로로 기록되고 책 폴더 재귀 탐색으로 인식 집합이 달라질 수 있음
+const SCHEMA_VERSION = 2;
 /** 청크 크기 — 청크마다 이벤트 루프에 양보해 UI 프리즈를 막는다 */
 const CHUNK_SIZE = 200;
 
@@ -104,7 +106,7 @@ export class VerseIndex {
 
     const meta: CacheMeta = {
       schemaVersion: SCHEMA_VERSION,
-      biblePath: this.getBiblePath().replace(/\/+$/, ""),
+      biblePath: normalizeFolderPath(this.getBiblePath()),
       fileCount: files.length,
       maxMtime: files.reduce((max, f) => Math.max(max, f.file.stat.mtime), 0),
     };
@@ -210,8 +212,8 @@ export class VerseIndex {
   private parseVersePath(
     path: string,
   ): { book: BookInfo; chapter: number; verse: number } | null {
-    const base = this.getBiblePath().replace(/\/+$/, "");
-    if (!base || !path.startsWith(base + "/")) return null;
+    const base = normalizeFolderPath(this.getBiblePath());
+    if (!base || !isUnderFolder(path, base)) return null;
     const name = path.split("/").pop() ?? "";
     const m = name.match(VERSE_FILE_RE);
     if (!m) return null;
