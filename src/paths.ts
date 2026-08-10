@@ -3,7 +3,7 @@
  * obsidian 미의존 — vitest 대상. Vault 접근이 필요한 쪽(bible-data)은
  * TFolder/TFile을 {path, name}으로 평탄화해 이 모듈에 넘긴다.
  */
-import { BOOKS, bookByFolderName } from "./books";
+import { BOOK_BY_ABBREV, BOOKS, bookByFolderName } from "./books";
 
 /**
  * 사용자 입력·FolderSuggest 출력을 볼트 경로로 정규화.
@@ -19,6 +19,30 @@ export function normalizeFolderPath(raw: string): string {
 export function isUnderFolder(path: string, folder: string): boolean {
   if (!folder) return false;
   return path === folder || path.startsWith(folder + "/");
+}
+
+/**
+ * 참조한 책의 폴더가 캐시에 없을 때 보여줄 안내 문구.
+ * 해당 testament의 경로가 미설정이고 그 testament 책이 캐시에 하나도 없으면 "미등록" 안내,
+ * 그 외에는 일반 문구 — 한 루트에 구약·신약이 다 들어 있는 배치가 지원되므로
+ * 경로가 빈 값이라는 사실만으로 미등록이라 단정하면 오탐이 난다.
+ * 두 경로 모두 빈 경우는 호출 전에(ensureFolderCache) 차단되므로 여기 오지 않는다.
+ */
+export function bookFolderMissingReason(
+  abbrev: string,
+  bookName: string,
+  opts: { cachedAbbrevs: ReadonlySet<string>; otPathSet: boolean; ntPathSet: boolean },
+): string {
+  const fallback = `볼트에서 ${bookName} 폴더를 찾지 못했습니다.`;
+  const book = BOOK_BY_ABBREV.get(abbrev);
+  if (!book) return fallback;
+  const pathSet = book.testament === "구약" ? opts.otPathSet : opts.ntPathSet;
+  if (pathSet) return fallback;
+  const testamentPresent = BOOKS.some(
+    (b) => b.testament === book.testament && opts.cachedAbbrevs.has(b.abbrev),
+  );
+  if (testamentPresent) return fallback;
+  return `${book.testament} 성경 폴더가 등록되어 있지 않습니다. 설정 → A4P 성경구절에서 ${book.testament} 성경 폴더를 선택해주세요.`;
 }
 
 /** "로마서 5장 통합주석.md" → { bookName: "로마서", chapter: 5 } */

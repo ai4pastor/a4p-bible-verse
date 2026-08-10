@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  bookFolderMissingReason,
   buildCommentaryIndex,
   isUnderFolder,
   matchBookFolders,
@@ -136,5 +137,62 @@ describe("buildCommentaryIndex", () => {
       { path: "주석/도마복음 1장 통합주석.md", name: "도마복음 1장 통합주석.md" },
     ]);
     expect(index.size).toBe(0);
+  });
+});
+
+describe("bookFolderMissingReason", () => {
+  const abbrevsOf = (testament: "구약" | "신약") =>
+    new Set(BOOKS.filter((b) => b.testament === testament).map((b) => b.abbrev));
+  const FALLBACK_창 = "볼트에서 창세기 폴더를 찾지 못했습니다.";
+
+  it("신약만 등록된 볼트에서 구약 구절 → 구약 미등록 안내", () => {
+    const reason = bookFolderMissingReason("창", "창세기", {
+      cachedAbbrevs: abbrevsOf("신약"),
+      otPathSet: false,
+      ntPathSet: true,
+    });
+    expect(reason).toBe(
+      "구약 성경 폴더가 등록되어 있지 않습니다. 설정 → A4P 성경구절에서 구약 성경 폴더를 선택해주세요.",
+    );
+  });
+
+  it("구약만 등록된 볼트에서 신약 구절 → 신약 미등록 안내", () => {
+    const reason = bookFolderMissingReason("요", "요한복음", {
+      cachedAbbrevs: abbrevsOf("구약"),
+      otPathSet: true,
+      ntPathSet: false,
+    });
+    expect(reason).toBe(
+      "신약 성경 폴더가 등록되어 있지 않습니다. 설정 → A4P 성경구절에서 신약 성경 폴더를 선택해주세요.",
+    );
+  });
+
+  it("오탐 방지 — 경로가 빈 값이어도 그 testament 책이 캐시에 있으면 일반 문구", () => {
+    // otPath 하나에 구약·신약이 다 들어 있는 배치: ntPathSet=false지만 신약 책이 잡혀 있음
+    const cached = new Set([...abbrevsOf("구약"), "요", "마"]);
+    const reason = bookFolderMissingReason("계", "요한계시록", {
+      cachedAbbrevs: cached,
+      otPathSet: true,
+      ntPathSet: false,
+    });
+    expect(reason).toBe("볼트에서 요한계시록 폴더를 찾지 못했습니다.");
+  });
+
+  it("경로가 설정돼 있으면 책 폴더 누락이어도 일반 문구", () => {
+    const reason = bookFolderMissingReason("창", "창세기", {
+      cachedAbbrevs: abbrevsOf("신약"),
+      otPathSet: true,
+      ntPathSet: true,
+    });
+    expect(reason).toBe(FALLBACK_창);
+  });
+
+  it("미지의 약자는 일반 문구로 폴백", () => {
+    const reason = bookFolderMissingReason("없음", "없는책", {
+      cachedAbbrevs: new Set<string>(),
+      otPathSet: false,
+      ntPathSet: true,
+    });
+    expect(reason).toBe("볼트에서 없는책 폴더를 찾지 못했습니다.");
   });
 });

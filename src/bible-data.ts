@@ -2,6 +2,7 @@ import { App, TFile, TFolder } from "obsidian";
 import { BOOK_BY_ABBREV, BOOKS, BookInfo, bookByFolderName } from "./books";
 import { extractVerseTexts, stripAnnotations } from "./note-parser";
 import {
+  bookFolderMissingReason,
   buildCommentaryIndex,
   isUnderFolder,
   matchBookFolders,
@@ -42,6 +43,8 @@ export class BibleData {
   private folderCache: Map<string, TFolder> | null = null;
   private chapterCache = new Map<string, number[]>();
   private duplicateBookFolders: string[] = [];
+  /** 설정된 루트 경로가 볼트에 없을 때의 testament별 에러 — folderCache와 같은 세대 */
+  private rootErrors = new Map<"구약" | "신약", string>();
   /** `${책이름}|${장}` → 통합주석 노트 경로 */
   private commentaryIndex: Map<string, string> | null = null;
 
@@ -67,6 +70,7 @@ export class BibleData {
     this.folderCache = null;
     this.chapterCache.clear();
     this.commentaryIndex = null;
+    this.rootErrors.clear();
   }
 
   /** 주석 폴더 경로 변경·주석 파일 변동 시 호출 */
@@ -77,13 +81,14 @@ export class BibleData {
   /** 책 약자 → 책 폴더 매핑을 lazy 구축. 실패 시 사용자 안내 문구 반환. */
   private ensureFolderCache(): string | null {
     if (this.folderCache) return null;
-    const roots = [
+    const roots: Array<{ label: "구약" | "신약"; path: string }> = [
       { label: "구약", path: this.otPath() },
       { label: "신약", path: this.ntPath() },
     ];
     if (!roots.some((r) => r.path)) {
       return "성경 폴더가 아직 설정되지 않았습니다. 설정 → A4P 성경구절에서 구약·신약 성경 폴더를 선택해주세요.";
     }
+    this.rootErrors.clear();
 
     // 중간 폴더의 이름·개수와 무관하게 각 루트에서 깊이 3까지 책 폴더를 찾는다.
     // 책 폴더로 확정된 폴더 아래로는 내려가지 않는다 (절 파일 수천 개 스캔 방지).
@@ -99,16 +104,26 @@ export class BibleData {
         if (!bookByFolderName(child.name)) walk(child, depth + 1);
       }
     };
+    let configured = 0;
     for (const r of roots) {
       if (!r.path) continue;
+      configured++;
       const base = this.app.vault.getAbstractFileByPath(r.path);
-      if (!(base instanceof TFolder)) return `${r.label} 성경 폴더를 찾을 수 없습니다: "${r.path}"`;
+      if (!(base instanceof TFolder)) {
+        // 한쪽 경로가 잘못돼도 다른 쪽 성경은 계속 동작해야 한다 — testament별 에러로 보관
+        this.rootErrors.set(r.label, `${r.label} 성경 폴더를 찾을 수 없습니다: "${r.path}"`);
+        continue;
+      }
       walk(base, 1);
+    }
+    if (this.rootErrors.size === configured) {
+      return [...this.rootErrors.values()].join(" ");
     }
 
     const { byAbbrev, duplicates } = matchBookFolders(flat);
     if (byAbbrev.size === 0) {
-      return "설정한 성경 폴더 아래에서 책 폴더(01.창세기 …)를 찾지 못했습니다. 성경 노트 패키지를 넣은 폴더를 정확히 선택했는지 확인해주세요.";
+      const rootNote = this.rootErrors.size > 0 ? [...this.rootErrors.values()].join(" ") + " " : "";
+      return `${rootNote}설정한 성경 폴더 아래에서 책 폴더(01.창세기 …)를 찾지 못했습니다. 성경 노트 패키지를 넣은 폴더를 정확히 선택했는지 확인해주세요.`;
     }
 
     const byPath = new Map(flat.map((f) => [f.path, f.folder]));
@@ -194,6 +209,9 @@ export class BibleData {
     this.invalidate();
     const err = this.ensureFolderCache();
     if (err) return { ok: false, messages: [err] };
+    // 비차단 캐시 빌드에서 이쪽 루트만 실패했을 수 있다 — 검증 버튼은 정확한 에러를 보여야 함
+    const rootError = this.rootErrors.get(testament);
+    if (rootError) return { ok: false, messages: [rootError] };
 
     const cache = this.folderCache!;
     const messages: string[] = [];
@@ -251,7 +269,18 @@ export class BibleData {
 
     const folder = this.folderCache!.get(ref.abbrev);
     if (!folder) {
-      return { ok: false, reason: `볼트에서 ${ref.bookName} 폴더를 찾지 못했습니다.` };
+      // 우선순위: 해당 testament 루트 에러(경로 오타) > 미등록 안내 > 일반 문구
+      const testament = BOOK_BY_ABBREV.get(ref.abbrev)?.testament;
+      const rootError = testament ? this.rootErrors.get(testament) : undefined;
+      if (rootError) return { ok: false, reason: rootError };
+      return {
+        ok: false,
+        reason: bookFolderMissingReason(ref.abbrev, ref.bookName, {
+          cachedAbbrevs: new Set(this.folderCache!.keys()),
+          otPathSet: !!this.otPath(),
+          ntPathSet: !!this.ntPath(),
+        }),
+      };
     }
 
     const unit = ref.bookName === "시편" ? "편" : "장";
