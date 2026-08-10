@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   bigramOverlap,
+  indexCoverage,
   normalizeText,
   searchVerses,
   tokenize,
@@ -181,5 +182,27 @@ describe("역본 범위", () => {
   it("빈 질의·빈 역본 배열은 빈 결과", () => {
     expect(searchVerses(ENTRIES, "   ", OPTS).hits).toEqual([]);
     expect(searchVerses(ENTRIES, "사랑", { versions: [] }).hits).toEqual([]);
+  });
+});
+
+describe("indexCoverage", () => {
+  const 창 = entry(1_001_001, "창1_1", { 새번역: "가짜 본문" });
+  const 시 = entry(19_023_001, "시23_1", { 새번역: "가짜 본문" });
+  const 요 = entry(43_003_016, "요3_16", { 새번역: "가짜 본문" });
+
+  it("구약 절만 있으면 신약 false", () => {
+    expect(indexCoverage([창, 시])).toEqual({ 구약: true, 신약: false });
+  });
+
+  it("신약 절만 있으면 구약 false", () => {
+    expect(indexCoverage([요])).toEqual({ 구약: false, 신약: true });
+  });
+
+  it("혼합이면 둘 다 true (정경 순 정렬 전제)", () => {
+    expect(indexCoverage([창, 시, 요])).toEqual({ 구약: true, 신약: true });
+  });
+
+  it("빈 인덱스는 둘 다 false", () => {
+    expect(indexCoverage([])).toEqual({ 구약: false, 신약: false });
   });
 });

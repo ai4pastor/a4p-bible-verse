@@ -1,3 +1,4 @@
+import { BOOK_BY_ABBREV } from "./books";
 import { IndexEntry, Version } from "./types";
 
 /**
@@ -41,6 +42,17 @@ export interface SearchOutcome {
   hits: SearchHit[];
   /** 완전 일치(exact) 절 수 */
   exactTotal: number;
+}
+
+/**
+ * 인덱스에 구약/신약 절이 존재하는지 — 한쪽만 등록된 볼트의 검색 범위 안내용.
+ * 엔트리가 정경 순 정렬(불변식)이므로 첫/마지막 엔트리만 보면 O(1)로 판정된다.
+ */
+export function indexCoverage(entries: readonly IndexEntry[]): Record<"구약" | "신약", boolean> {
+  if (entries.length === 0) return { 구약: false, 신약: false };
+  const first = BOOK_BY_ABBREV.get(entries[0].abbrev)?.testament;
+  const last = BOOK_BY_ABBREV.get(entries[entries.length - 1].abbrev)?.testament;
+  return { 구약: first === "구약", 신약: last === "신약" };
 }
 
 /** 인덱스 빌드 시 본문 1회 정규화: 개행·연속 공백 → 공백, NFC */

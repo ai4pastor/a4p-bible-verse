@@ -5,7 +5,7 @@ import type BibleVersePlugin from "./main";
 import { extractHeadingSection, stripAnnotations } from "./note-parser";
 import { formatReference, parseLinkTarget, parseReference } from "./reference-parser";
 import { insertBlock } from "./insert";
-import { SearchHit, searchVerses } from "./search";
+import { SearchHit, indexCoverage, searchVerses } from "./search";
 import { BibleReference, IndexEntry, VERSIONS, Version, VerseData } from "./types";
 
 const DEBOUNCE_MS = 150;
@@ -383,12 +383,19 @@ export class VerseInsertModal extends Modal {
 
     const scopeLabel =
       this.plugin.settings.keywordSearchScope === "all" ? "전체 역본" : this.version;
+    // 한쪽 testament만 등록된 볼트 — 0건의 이유(미등록)를 설명해 오해를 막는다
+    const coverage = indexCoverage(index.entries);
+    const missingTestament = (["구약", "신약"] as const).filter((t) => !coverage[t]);
+    const coverageNote =
+      missingTestament.length === 1
+        ? ` (${missingTestament[0]} 구절 미등록 — 등록된 범위에서만 검색됩니다)`
+        : "";
     const hits = outcome.hits;
     if (hits.length === 0) {
-      this.setStatus(`"${query}" — 일치하는 절이 없습니다 (${scopeLabel})`, "warn");
+      this.setStatus(`"${query}" — 일치하는 절이 없습니다 (${scopeLabel})${coverageNote}`, "warn");
     } else if (hits[0].tier === "fuzzy") {
       this.setStatus(
-        `"${query}" — 정확히 일치하는 절이 없어 비슷한 절 ${hits.length}개를 표시합니다`,
+        `"${query}" — 정확히 일치하는 절이 없어 비슷한 절 ${hits.length}개를 표시합니다${coverageNote}`,
         "warn",
       );
     } else {
@@ -396,7 +403,7 @@ export class VerseInsertModal extends Modal {
       const partialShown = hits.length - exactShown;
       const partialLabel = partialShown > 0 ? ` · 유사 ${partialShown}절` : "";
       this.setStatus(
-        `"${query}" 본문 검색 (${scopeLabel}) — ${exactShown.toLocaleString()}절${partialLabel}`,
+        `"${query}" 본문 검색 (${scopeLabel}) — ${exactShown.toLocaleString()}절${partialLabel}${coverageNote}`,
         "ok",
       );
     }
