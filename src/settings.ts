@@ -258,13 +258,19 @@ export class BibleVerseSettingTab extends PluginSettingTab {
       .setName(opts.name)
       .setDesc(opts.desc)
       .addText((text) => {
+        let saved = opts.getValue();
         text
           .setPlaceholder("클릭하면 폴더 목록이 나타납니다")
-          .setValue(opts.getValue())
+          .setValue(saved)
           .onChange(async (value) => {
             const trimmed = value.trim();
             // FolderSuggest가 선택 시 끝 슬래시를 붙이므로 저장값은 반드시 정규화
-            opts.setValue(trimmed ? normalizeFolderPath(normalizePath(trimmed)) : "");
+            const next = trimmed ? normalizeFolderPath(normalizePath(trimmed)) : "";
+            // FolderSuggest의 focus 트릭이 input 이벤트를 흘리므로,
+            // 값이 실제로 바뀐 경우에만 저장·invalidate (인덱스 불필요 폐기 방지)
+            if (next === saved) return;
+            saved = next;
+            opts.setValue(next);
             await this.plugin.persist();
           });
         new FolderSuggest(this.app, text.inputEl);
