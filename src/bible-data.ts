@@ -9,6 +9,16 @@ import {
   normalizeFolderPath,
 } from "./paths";
 import { BibleReference, VerseData, Version } from "./types";
+import {
+  BOOK_SCAN_DEPTH,
+  FlatEntry,
+  VERSE_FILE_RE,
+  VerseFileIndex,
+  diagnoseBookFolder,
+  formatBookDiagnosis,
+  indexVerseFiles,
+  nfc,
+} from "./verse-files";
 
 /** BibleData가 참조하는 폴더 경로 설정 묶음 (전부 볼트 루트 기준) */
 export interface PathSettings {
@@ -39,9 +49,13 @@ function extractRefLinks(value: unknown): string[] {
  * 볼트의 성경 구절 노트 접근 계층.
  * 인덱스 없이 파일명 규칙으로 O(1) 조회하고, 폴더 매핑·장 절 목록만 캐시한다.
  */
+/** 정본 성경 노트 패키지의 절 파일 수 — 동기화 미완료·부분 설치 판별용 소프트 기준 */
+const EXPECTED_VERSE_FILES = { 구약: 23_145, 신약: 7_959 } as const;
+
 export class BibleData {
   private folderCache: Map<string, TFolder> | null = null;
-  private chapterCache = new Map<string, number[]>();
+  /** 책 약자 → 절 파일 인덱스 (책 폴더 내부 재귀 스캔, lazy) */
+  private bookFileCache = new Map<string, VerseFileIndex<TFile>>();
   private duplicateBookFolders: string[] = [];
   /** 설정된 루트 경로가 볼트에 없을 때의 testament별 에러 — folderCache와 같은 세대 */
   private rootErrors = new Map<"구약" | "신약", string>();
@@ -68,9 +82,25 @@ export class BibleData {
   /** 설정(폴더 경로) 변경 시 호출 */
   invalidate() {
     this.folderCache = null;
-    this.chapterCache.clear();
+    this.bookFileCache.clear();
     this.commentaryIndex = null;
     this.rootErrors.clear();
+  }
+
+  /**
+   * vault 파일 이벤트 — 성경 루트 하위의 절 파일이면 해당 책 캐시만 무효화.
+   * iCloud·OneDrive가 파일을 뒤늦게 내려받는 동안에도 재시작 없이 자동 회복된다.
+   */
+  handleVaultChange(path: string): void {
+    const bases = [this.otPath(), this.ntPath()].filter(Boolean);
+    if (bases.length === 0) return;
+    const p = nfc(path);
+    if (!bases.some((b) => isUnderFolder(p, nfc(b)))) return;
+    const m = nfc(path.split("/").pop() ?? "").match(VERSE_FILE_RE);
+    if (!m || !BOOK_BY_ABBREV.has(m[1])) return;
+    this.bookFileCache.delete(m[1]);
+    // 인식된 적 없는 책의 절 파일이 나타나면(책 폴더가 뒤늦게 동기화) 폴더 캐시도 재구축
+    if (this.folderCache && !this.folderCache.has(m[1])) this.folderCache = null;
   }
 
   /** 주석 폴더 경로 변경·주석 파일 변동 시 호출 */
@@ -134,35 +164,49 @@ export class BibleData {
     return null;
   }
 
-  /** 해당 장에 실재하는 절 번호 목록 (정렬됨). 장이 없으면 빈 배열. */
-  private chapterVerses(abbrev: string, chapter: number): number[] {
-    const key = `${abbrev}${chapter}`;
-    const cached = this.chapterCache.get(key);
+  /** TFolder 서브트리를 FlatEntry 목록으로 BFS 평탄화 (verse-files 순수 함수의 입력) */
+  private flattenFolder(root: TFolder, maxDepth: number): Array<FlatEntry<TFile>> {
+    const out: Array<FlatEntry<TFile>> = [];
+    let level: TFolder[] = [root];
+    for (let depth = 1; depth <= maxDepth && level.length > 0; depth++) {
+      const next: TFolder[] = [];
+      for (const f of level) {
+        for (const child of f.children) {
+          if (child instanceof TFolder) {
+            out.push({ name: child.name, depth, isFolder: true });
+            next.push(child);
+          } else if (child instanceof TFile) {
+            out.push({ name: child.name, depth, isFolder: false, file: child });
+          }
+        }
+      }
+      level = next;
+    }
+    return out;
+  }
+
+  /**
+   * 책의 절 파일 인덱스를 lazy 구축 — 책 폴더 내부를 깊이 제한 재귀로 스캔해
+   * 압축 해제 이중 폴더·장별 하위 폴더·NFD 파일명 배치를 흡수한다.
+   */
+  private ensureBookFiles(abbrev: string): VerseFileIndex<TFile> | null {
+    const cached = this.bookFileCache.get(abbrev);
     if (cached) return cached;
     const folder = this.folderCache?.get(abbrev);
-    if (!folder) return [];
-    const re = new RegExp(`^${abbrev}${chapter}_(\\d+)\\.md$`);
-    const verses = folder.children
-      .map((c) => (c instanceof TFile ? c.name.match(re) : null))
-      .filter((m): m is RegExpMatchArray => m !== null)
-      .map((m) => parseInt(m[1], 10))
-      .sort((a, b) => a - b);
-    this.chapterCache.set(key, verses);
-    return verses;
+    if (!folder) return null;
+    const idx = indexVerseFiles(abbrev, this.flattenFolder(folder, BOOK_SCAN_DEPTH));
+    this.bookFileCache.set(abbrev, idx);
+    return idx;
+  }
+
+  /** 해당 장에 실재하는 절 번호 목록 (정렬됨). 장이 없으면 빈 배열. */
+  private chapterVerses(abbrev: string, chapter: number): number[] {
+    return this.ensureBookFiles(abbrev)?.chapters.get(chapter) ?? [];
   }
 
   /** 책의 마지막 장 번호 (없는 장 안내용) */
   private maxChapter(abbrev: string): number {
-    const folder = this.folderCache?.get(abbrev);
-    if (!folder) return 0;
-    const re = new RegExp(`^${abbrev}(\\d+)_\\d+\\.md$`);
-    let max = 0;
-    for (const c of folder.children) {
-      if (!(c instanceof TFile)) continue;
-      const m = c.name.match(re);
-      if (m) max = Math.max(max, parseInt(m[1], 10));
-    }
-    return max;
+    return this.ensureBookFiles(abbrev)?.maxChapter ?? 0;
   }
 
   /**
@@ -177,18 +221,14 @@ export class BibleData {
 
     const files: Array<{ file: TFile; book: BookInfo; chapter: number; verse: number }> = [];
     for (const book of BOOKS) {
-      const folder = this.folderCache!.get(book.abbrev);
-      if (!folder) continue;
-      const re = new RegExp(`^${book.abbrev}(\\d+)_(\\d+)\\.md$`);
-      const inBook: Array<{ file: TFile; book: BookInfo; chapter: number; verse: number }> = [];
-      for (const child of folder.children) {
-        if (!(child instanceof TFile)) continue;
-        const m = child.name.match(re);
-        if (!m) continue;
-        inBook.push({ file: child, book, chapter: parseInt(m[1], 10), verse: parseInt(m[2], 10) });
+      const idx = this.ensureBookFiles(book.abbrev);
+      if (!idx) continue;
+      for (const chapter of [...idx.chapters.keys()].sort((a, b) => a - b)) {
+        for (const verse of idx.chapters.get(chapter)!) {
+          const file = idx.byLink.get(`${book.abbrev}${chapter}_${verse}`);
+          if (file) files.push({ file, book, chapter, verse });
+        }
       }
-      inBook.sort((a, b) => a.chapter - b.chapter || a.verse - b.verse);
-      files.push(...inBook);
     }
     if (files.length === 0) {
       return { ok: false, reason: "성경 폴더에서 구절 노트를 찾지 못했습니다." };
@@ -232,6 +272,43 @@ export class BibleData {
       );
     }
 
+    // 절 파일 총수 — 동기화 미완료(iCloud·OneDrive 주문형)를 판별하는 가장 강한 신호
+    const totalVerses = books.reduce(
+      (n, b) => n + (this.ensureBookFiles(b.abbrev)?.byLink.size ?? 0),
+      0,
+    );
+    const expected = EXPECTED_VERSE_FILES[testament];
+    if (totalVerses === 0) {
+      ok = false;
+      messages.push(`⚠️ 책 폴더는 있지만 ${testament} 절 파일이 하나도 보이지 않습니다.`);
+      messages.push(
+        `📁 iCloud·OneDrive를 사용하시는 경우 폴더 모양만 먼저 만들어지고 파일은 아직 이 기기에 내려받아지지 않았을 수 있습니다. Finder(맥)나 파일 탐색기(윈도우)에서 성경 폴더를 마우스 오른쪽 버튼으로 눌러 "지금 다운로드"(iCloud) 또는 "이 장치에 항상 유지"(OneDrive)를 선택하고, 다운로드가 끝난 뒤 옵시디언을 껐다 켠 후 다시 검증해주세요.`,
+      );
+    } else if (totalVerses < expected) {
+      ok = false;
+      const emptyBooks = books
+        .filter((b) => (this.ensureBookFiles(b.abbrev)?.byLink.size ?? 0) === 0)
+        .map((b) => b.name);
+      const emptyNote =
+        emptyBooks.length > 0
+          ? ` · 절 파일이 없는 책: ${emptyBooks.slice(0, 5).join(", ")}${emptyBooks.length > 5 ? ` 외 ${emptyBooks.length - 5}권` : ""}`
+          : "";
+      messages.push(
+        `⚠️ ${testament} 절 파일 ${totalVerses.toLocaleString("ko-KR")}개 인식 — 예상(약 ${expected.toLocaleString("ko-KR")}개)보다 적습니다. 동기화가 아직 끝나지 않았거나 일부 파일이 빠졌을 수 있습니다${emptyNote}`,
+      );
+    } else {
+      messages.push(`✅ ${testament} 절 파일 ${totalVerses.toLocaleString("ko-KR")}개 인식`);
+    }
+    const nfdTotal = books.reduce(
+      (n, b) => n + (this.bookFileCache.get(b.abbrev)?.nfdFixed ?? 0),
+      0,
+    );
+    if (nfdTotal > 0) {
+      messages.push(
+        `ℹ️ 일부 파일 이름이 자모가 분리된 형태(NFD)로 저장되어 있었지만 자동으로 보정해 인식했습니다.`,
+      );
+    }
+
     if (this.duplicateBookFolders.length > 0) {
       messages.push(
         `⚠️ 같은 책으로 인식되는 폴더가 2개 이상 있습니다 (먼저 찾은 폴더 사용): ${this.duplicateBookFolders.join(", ")}`,
@@ -256,7 +333,22 @@ export class BibleData {
       }
     } else {
       ok = false;
-      messages.push(`⚠️ 샘플 구절(${sampleName}.md)을 읽지 못했습니다`);
+      const cause = sample.ok ? "" : ` — 원인: ${sample.reason}`;
+      messages.push(`⚠️ 샘플 구절(${sampleName}.md)을 읽지 못했습니다${cause}`);
+      // 절 파일이 아예 없는 경우는 위의 동기화 안내가 이미 원인을 설명한다
+      const sampleFolder = cache.get(sampleRef.abbrev);
+      if (totalVerses > 0 && sampleFolder) {
+        messages.push(
+          ...formatBookDiagnosis(
+            sampleRef.bookName,
+            sampleRef.abbrev,
+            diagnoseBookFolder(
+              sampleRef.abbrev,
+              this.flattenFolder(sampleFolder, BOOK_SCAN_DEPTH + 2),
+            ),
+          ),
+        );
+      }
     }
 
     return { ok, messages };
@@ -347,12 +439,20 @@ export class BibleData {
         .map((v) => ({ chapter: ref.chapter, verse: v }));
     }
 
+    const bookFiles = this.ensureBookFiles(ref.abbrev);
     const verses = await Promise.all(
       targets.map(async ({ chapter, verse }): Promise<VerseData> => {
         const linkTarget = `${ref.abbrev}${chapter}_${verse}`;
-        const file = this.app.vault.getAbstractFileByPath(`${folder.path}/${linkTarget}.md`);
-        if (!(file instanceof TFile)) return { chapter, verse, linkTarget, texts: {} };
-        const content = await this.app.vault.cachedRead(file);
+        // 직계 경로 조합 대신 재귀 인덱스 조회 — 중첩·NFD 실파일도 TFile 참조로 읽는다
+        const file = bookFiles?.byLink.get(linkTarget);
+        if (!file) return { chapter, verse, linkTarget, texts: {} };
+        let content: string;
+        try {
+          content = await this.app.vault.cachedRead(file);
+        } catch {
+          // 동기화 중 삭제된 스테일 참조 — 미존재 파일과 동일하게 처리
+          return { chapter, verse, linkTarget, texts: {} };
+        }
         const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
         const texts = extractVerseTexts(content);
         if (strip) {

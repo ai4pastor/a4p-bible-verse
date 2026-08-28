@@ -47,18 +47,22 @@ export default class BibleVersePlugin extends Plugin {
     this.registerEvent(
       this.app.vault.on("create", (f) => {
         this.verseIndex.handleFileEvent(f, "create");
+        this.bibleData.handleVaultChange(f.path);
         this.touchCommentary(f.path);
       }),
     );
     this.registerEvent(
       this.app.vault.on("delete", (f) => {
         this.verseIndex.handleFileEvent(f, "delete");
+        this.bibleData.handleVaultChange(f.path);
         this.touchCommentary(f.path);
       }),
     );
     this.registerEvent(
       this.app.vault.on("rename", (f, oldPath) => {
         this.verseIndex.handleFileEvent(f, "rename", oldPath);
+        this.bibleData.handleVaultChange(f.path);
+        this.bibleData.handleVaultChange(oldPath);
         this.touchCommentary(f.path);
         this.touchCommentary(oldPath);
       }),
