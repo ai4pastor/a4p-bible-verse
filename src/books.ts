@@ -93,8 +93,8 @@ export const BOOK_TOKENS: Array<[string, BookInfo]> = BOOKS.flatMap((b) =>
   [b.abbrev, b.name, ...b.aliases].map((t): [string, BookInfo] => [t, b]),
 ).sort((a, b) => b[0].length - a[0].length);
 
-/** 폴더명(NN 접두어 제거 후)으로 책 찾기 */
+/** 폴더명(NN 접두어 제거 후)으로 책 찾기. NFC 정규화로 자모 분리(NFD) 폴더명 방어. */
 export function bookByFolderName(folderName: string): BookInfo | undefined {
-  const stripped = folderName.replace(/^\d+\./, "").trim();
+  const stripped = folderName.normalize("NFC").replace(/^\d+\./, "").trim();
   return BOOKS.find((b) => b.name === stripped || b.aliases.includes(stripped));
 }

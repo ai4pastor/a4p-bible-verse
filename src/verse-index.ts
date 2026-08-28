@@ -5,6 +5,7 @@ import { extractVerseTexts } from "./note-parser";
 import { isUnderFolder, normalizeFolderPath } from "./paths";
 import { normalizeText } from "./search";
 import { IndexEntry, Version } from "./types";
+import { VERSE_FILE_RE, nfc } from "./verse-files";
 
 /**
  * 본문 키워드 검색용 전체 구절 인덱스.
@@ -33,8 +34,6 @@ interface CacheFile extends CacheMeta {
 }
 
 export type IndexStatus = "idle" | "building" | "ready";
-
-const VERSE_FILE_RE = /^([가-힣]+)(\d+)_(\d+)\.md$/;
 
 const yieldToUI = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
@@ -219,8 +218,8 @@ export class VerseIndex {
     path: string,
   ): { book: BookInfo; chapter: number; verse: number } | null {
     const bases = this.basePaths();
-    if (bases.length === 0 || !bases.some((b) => isUnderFolder(path, b))) return null;
-    const name = path.split("/").pop() ?? "";
+    if (bases.length === 0 || !bases.some((b) => isUnderFolder(nfc(path), nfc(b)))) return null;
+    const name = nfc(path.split("/").pop() ?? "");
     const m = name.match(VERSE_FILE_RE);
     if (!m) return null;
     const book = BOOK_BY_ABBREV.get(m[1]);

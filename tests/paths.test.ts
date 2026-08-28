@@ -7,7 +7,7 @@ import {
   normalizeFolderPath,
   parseCommentaryFileName,
 } from "../src/paths";
-import { BOOKS } from "../src/books";
+import { BOOKS, bookByFolderName } from "../src/books";
 
 describe("normalizeFolderPath", () => {
   it("앞뒤 공백과 슬래시를 제거한다", () => {
@@ -64,6 +64,14 @@ describe("parseCommentaryFileName", () => {
     expect(parseCommentaryFileName("로마서 5장.md")).toBeNull();
     expect(parseCommentaryFileName("로마서 통합주석.md")).toBeNull();
     expect(parseCommentaryFileName("일반노트.md")).toBeNull();
+  });
+});
+
+describe("bookByFolderName", () => {
+  it("NFD(자모 분리) 폴더명도 인식한다", () => {
+    expect(bookByFolderName("04.요한복음".normalize("NFD"))?.abbrev).toBe("요");
+    expect(bookByFolderName("요한복음".normalize("NFD"))?.abbrev).toBe("요");
+    expect(bookByFolderName("계시록".normalize("NFD"))?.abbrev).toBe("계");
   });
 });
 
