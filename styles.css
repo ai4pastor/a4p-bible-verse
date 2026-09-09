@@ -160,6 +160,8 @@
 }
 
 .bible-verse-preview-body {
+  flex: 1 1 auto;
+  min-height: 0; /* flex 자식이 max-height 안에서 스크롤 컨테이너가 되도록 */
   overflow-y: auto;
   padding-top: var(--size-4-2);
   font-size: var(--font-ui-small);
@@ -168,6 +170,61 @@
 
 .bible-verse-preview-body .internal-link {
   cursor: pointer;
+}
+
+/* 인용한 설교 미리보기 — 검색한 구절을 가리키는 링크·블록 강조.
+   --text-highlight-bg는 글자색 대비가 보장되지 않아 .bible-verse-match와 같은 액센트 쌍 사용 */
+.bible-verse-preview-body a.internal-link.bible-verse-cite,
+.bible-verse-preview-body .internal-embed.bible-verse-cite {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-radius: 2px;
+  padding: 0 3px;
+  text-decoration: none;
+  font-weight: var(--font-semibold);
+}
+
+/* 인용 블록(불릿·문단·콜아웃): 레이아웃을 바꾸지 않는 좌측 액센트 바 */
+.bible-verse-preview-body .bible-verse-cite-block {
+  box-shadow: inset 3px 0 0 0 var(--interactive-accent);
+  border-radius: var(--radius-s);
+}
+
+.bible-verse-preview-body .bible-verse-cite-block.is-current {
+  box-shadow:
+    inset 3px 0 0 0 var(--interactive-accent),
+    inset 0 0 0 1px var(--interactive-accent);
+}
+
+/* 미리보기 헤더: "인용 N/M" 배지 + ↑/↓ 이동 */
+.bible-verse-cite-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-right: 4px;
+}
+
+.bible-verse-cite-nav:empty {
+  display: none;
+}
+
+.bible-verse-cite-badge {
+  font-size: var(--font-ui-smaller);
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-radius: var(--radius-l);
+  padding: 0 7px;
+  white-space: nowrap;
+}
+
+.bible-verse-cite-badge.is-empty {
+  background: var(--background-secondary);
+  color: var(--text-faint);
+  border: 1px solid var(--background-modifier-border);
+}
+
+.bible-verse-preview-actions .bible-verse-cite-nav button {
+  padding: 2px 6px;
 }
 
 .bible-verse-row {
