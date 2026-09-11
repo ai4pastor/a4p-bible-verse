@@ -227,6 +227,12 @@
   padding: 2px 6px;
 }
 
+/* 본문 인덱스 첫 생성 확인창 — 설정 안내 문구 */
+.bible-verse-confirm-build-hint {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
 .bible-verse-row {
   display: flex;
   align-items: baseline;

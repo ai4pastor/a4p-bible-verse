@@ -22,6 +22,7 @@ function v1Settings(paths: Partial<BibleVerseSettings>): BibleVerseSettings {
     stripAnnotations: false,
     commentaryPath: "171. 성경주석",
     keywordSearchScope: "current",
+    enableKeywordSearch: true,
     ...paths,
   };
 }

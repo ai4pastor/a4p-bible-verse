@@ -30,6 +30,11 @@ export interface BibleVerseSettings {
   commentaryPath: string;
   /** 키워드 본문 검색 대상 — "current": 현재 선택 역본만, "all": 5역본 전체 */
   keywordSearchScope: "current" | "all";
+  /**
+   * 본문 키워드 검색 사용 여부 (저사양 PC용). 끄면 인덱스 빌드(3만 파일 읽기)·디스크 캐시
+   * 로드·메모리 사용이 전혀 일어나지 않는다. 장절 참조 검색·자동완성·삽입은 영향 없음.
+   */
+  enableKeywordSearch: boolean;
 }
 
 export const DEFAULT_SETTINGS: BibleVerseSettings = {
@@ -47,6 +52,7 @@ export const DEFAULT_SETTINGS: BibleVerseSettings = {
   stripAnnotations: false,
   commentaryPath: "",
   keywordSearchScope: "current",
+  enableKeywordSearch: true,
 };
 
 export class BibleVerseSettingTab extends PluginSettingTab {
@@ -148,20 +154,39 @@ export class BibleVerseSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("키워드 검색 대상 역본")
+      .setName("본문 키워드 검색 사용")
       .setDesc(
-        "본문 키워드 검색(예: \"사랑 은혜\") 시 현재 선택한 역본에서만 찾을지, 5개 역본 전체에서 찾을지 정합니다. 첫 키워드 검색 시 인덱스 생성에 몇 초가 걸리며, 이후에는 캐시로 바로 검색됩니다.",
+        "참조 형식이 아닌 입력(예: 사랑 은혜)을 성경 본문에서 찾습니다. 첫 검색 때 전체 구절 노트(약 3만 개)를 읽어 인덱스를 만들고 메모리를 100MB 이상 사용합니다. 사양이 낮은 PC에서 옵시디언이 느려지면 끄세요 — 장절 참조 검색·자동완성·삽입은 그대로 동작합니다. 켜 두어도 인덱스는 처음 단어 검색 때 확인을 거친 뒤에만 만듭니다.",
       )
-      .addDropdown((drop) => {
-        drop.addOption("current", "현재 선택 역본만");
-        drop.addOption("all", "전체 5역본");
-        drop
-          .setValue(this.plugin.settings.keywordSearchScope)
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.enableKeywordSearch)
           .onChange(async (value) => {
-            this.plugin.settings.keywordSearchScope = value as "current" | "all";
+            this.plugin.settings.enableKeywordSearch = value;
+            // 끄면 메모리에 올라온 인덱스를 즉시 해제한다 (디스크 캐시 파일은 그대로 둔다)
+            if (!value) this.plugin.verseIndex.invalidate();
             await this.plugin.persist();
-          });
-      });
+            this.display(); // 하위 옵션(대상 역본) 표시 여부 갱신
+          }),
+      );
+
+    if (this.plugin.settings.enableKeywordSearch) {
+      new Setting(containerEl)
+        .setName("키워드 검색 대상 역본")
+        .setDesc(
+          "본문 키워드 검색(예: \"사랑 은혜\") 시 현재 선택한 역본에서만 찾을지, 5개 역본 전체에서 찾을지 정합니다. 첫 키워드 검색 시 인덱스 생성에 몇 초가 걸리며, 이후에는 캐시로 바로 검색됩니다.",
+        )
+        .addDropdown((drop) => {
+          drop.addOption("current", "현재 선택 역본만");
+          drop.addOption("all", "전체 5역본");
+          drop
+            .setValue(this.plugin.settings.keywordSearchScope)
+            .onChange(async (value) => {
+              this.plugin.settings.keywordSearchScope = value as "current" | "all";
+              await this.plugin.persist();
+            });
+        });
+    }
 
     new Setting(containerEl)
       .setName("각주 표기 정리")

@@ -22,6 +22,10 @@ const SCHEMA_VERSION = 2;
 /** 청크 크기 — 청크마다 이벤트 루프에 양보해 UI 프리즈를 막는다 */
 const CHUNK_SIZE = 200;
 
+/** 사용자가 전체 생성 확인창에서 취소했을 때 ensureBuilt가 돌려주는 안내 (에러가 아님) */
+export const BUILD_CANCELLED =
+  "본문 인덱스 생성을 취소했습니다 — 장절 참조로 검색하거나, 다시 단어를 입력하면 다시 물어봅니다.";
+
 interface CacheMeta {
   schemaVersion: number;
   biblePath: string;
@@ -77,10 +81,14 @@ export class VerseIndex {
 
   /**
    * 인덱스를 준비시킨다 (디스크 캐시 로드 또는 전체 빌드).
-   * 성공 시 null, 실패 시 사용자 안내 문구(한국어)를 반환한다.
+   * 성공 시 null, 실패·취소 시 사용자 안내 문구(한국어)를 반환한다 (취소는 BUILD_CANCELLED).
+   * confirmFullBuild가 있으면 디스크 캐시가 없어 전체 읽기가 필요할 때만 호출해 승인을 받는다.
    * 동시 호출은 진행 중인 빌드를 공유한다 (single-flight).
    */
-  ensureBuilt(onProgress?: (done: number, total: number) => void): Promise<string | null> {
+  ensureBuilt(
+    onProgress?: (done: number, total: number) => void,
+    confirmFullBuild?: (fileCount: number) => Promise<boolean>,
+  ): Promise<string | null> {
     if (this._status === "ready") return Promise.resolve(null);
     if (this.buildPromise) return this.buildPromise;
     if (Platform.isMobile) {
@@ -89,7 +97,7 @@ export class VerseIndex {
       );
     }
     this._status = "building";
-    this.buildPromise = this.doBuild(onProgress)
+    this.buildPromise = this.doBuild(onProgress, confirmFullBuild)
       .catch((e) => {
         console.error("[a4p-bible-verse] 인덱스 빌드 실패", e);
         return "본문 인덱스 생성에 실패했습니다. 콘솔 로그를 확인해주세요.";
@@ -104,7 +112,10 @@ export class VerseIndex {
     return this.buildPromise;
   }
 
-  private async doBuild(onProgress?: (done: number, total: number) => void): Promise<string | null> {
+  private async doBuild(
+    onProgress?: (done: number, total: number) => void,
+    confirmFullBuild?: (fileCount: number) => Promise<boolean>,
+  ): Promise<string | null> {
     const enumerated = this.data.enumerateVerseFiles();
     if (!enumerated.ok) return enumerated.reason;
     const { files } = enumerated;
@@ -117,6 +128,9 @@ export class VerseIndex {
     };
 
     if (await this.loadCache(meta)) return null;
+
+    // 캐시가 없어 3만 파일을 실제로 읽어야 할 때만 사용자 승인 (저사양 PC·동기화 중 볼트 보호)
+    if (confirmFullBuild && !(await confirmFullBuild(files.length))) return BUILD_CANCELLED;
 
     const entries: IndexEntry[] = [];
     for (let i = 0; i < files.length; i += CHUNK_SIZE) {

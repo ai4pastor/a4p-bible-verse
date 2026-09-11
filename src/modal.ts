@@ -7,6 +7,8 @@ import { formatReference, parseLinkTarget, parseReference } from "./reference-pa
 import { insertBlock } from "./insert";
 import { SearchHit, indexCoverage, searchVerses } from "./search";
 import { BibleReference, IndexEntry, VERSIONS, Version, VerseData } from "./types";
+import { BUILD_CANCELLED } from "./verse-index";
+import { ConfirmBuildModal } from "./confirm-build-modal";
 
 const DEBOUNCE_MS = 150;
 
@@ -350,23 +352,41 @@ export class VerseInsertModal extends Modal {
     this.ref = null;
     this.loaded = null;
 
+    // 저사양 PC용 토글 — 꺼져 있으면 인덱스 빌드·캐시 로드 없이 안내만
+    if (!this.plugin.settings.enableKeywordSearch) {
+      this.keywordHits = null;
+      this.listEl.empty();
+      this.contextEl.empty();
+      this.setStatus(
+        "본문 키워드 검색이 꺼져 있습니다 — 장절 참조(예: 요3:16)로 검색하거나 설정 → A4P 성경구절에서 켜주세요.",
+        "warn",
+      );
+      this.updateInsertButton();
+      return;
+    }
+
     const index = this.plugin.verseIndex;
     if (index.status !== "ready") {
       this.listEl.empty();
       this.contextEl.empty();
       this.setStatus("본문 인덱스 준비 중… (처음 한 번만 걸립니다)", "muted");
-      const err = await index.ensureBuilt((done, total) => {
-        if (id === this.requestId) {
-          this.setStatus(
-            `본문 인덱스 생성 중… (${done.toLocaleString()}/${total.toLocaleString()})`,
-            "muted",
-          );
-        }
-      });
+      const err = await index.ensureBuilt(
+        (done, total) => {
+          if (id === this.requestId) {
+            this.setStatus(
+              `본문 인덱스 생성 중… (${done.toLocaleString()}/${total.toLocaleString()})`,
+              "muted",
+            );
+          }
+        },
+        // 디스크 캐시가 없어 3만 파일 전체 읽기가 필요할 때만 확인창이 뜬다
+        (fileCount) => ConfirmBuildModal.ask(this.app, fileCount),
+      );
+      this.inputEl.focus(); // 확인창이 포커스를 가져갔을 수 있다
       if (id !== this.requestId) return;
       if (err) {
         this.keywordHits = null;
-        this.setStatus(err, "error");
+        this.setStatus(err, err === BUILD_CANCELLED ? "warn" : "error");
         this.updateInsertButton();
         return;
       }
@@ -418,7 +438,12 @@ export class VerseInsertModal extends Modal {
   // ── 렌더링 ────────────────────────────────────────────
 
   private renderEmptyState() {
-    this.setStatus("장절 참조 또는 키워드를 입력하세요 (예: 요3:16, 사랑 은혜)", "muted");
+    this.setStatus(
+      this.plugin.settings.enableKeywordSearch
+        ? "장절 참조 또는 키워드를 입력하세요 (예: 요3:16, 사랑 은혜)"
+        : "장절 참조를 입력하세요 (예: 요3:16, 시23편)",
+      "muted",
+    );
     this.listEl.empty();
     this.contextEl.empty();
     this.updateInsertButton();
