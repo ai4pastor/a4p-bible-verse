@@ -395,3 +395,108 @@
   font-size: var(--font-ui-small);
   color: var(--text-muted);
 }
+
+/* ── 설정 탭 — 역본 섹션 ───────────────────────────────── */
+.bible-verse-settings-help {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  margin: 0 0 var(--size-4-2);
+}
+
+.bible-verse-version-caption {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  text-align: right;
+  padding-bottom: 4px;
+}
+
+.bible-verse-version-row .setting-item-control {
+  gap: 4px;
+}
+
+.bible-verse-version-short {
+  width: 7em;
+}
+
+/* 막힌 동작(첫 행 ↑·마지막 행 ↓·마지막 역본 빼기·이미 기본 상태) — setDisabled는 툴팁까지 막으므로 흐리게만 */
+.bible-verse-version-row .clickable-icon.is-blocked,
+.bible-verse-version-actions button.is-blocked {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.bible-verse-version-badge {
+  display: inline-block;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  padding: 0 5px;
+  margin-right: 4px;
+}
+
+.bible-verse-version-badge.is-warn {
+  color: var(--text-warning);
+  border-color: var(--text-warning);
+}
+
+/* "노트에서 찾은 새 역본" 칩 줄 — 설정 탭·역본 추가 모달 공용 (칩은 .bible-verse-chip 재사용) */
+.bible-verse-version-detected {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: var(--size-4-2) 0;
+}
+
+.bible-verse-version-detected:empty {
+  display: none;
+}
+
+/* 이름 없는 버튼 행 (노트에서 찾기 · 역본 추가 · 되돌리기) */
+.bible-verse-version-actions .setting-item-info {
+  display: none;
+}
+
+.bible-verse-version-actions .setting-item-control {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.bible-verse-settings-status-line.is-warn {
+  color: var(--text-warning);
+}
+
+.is-mobile .bible-verse-version-row .clickable-icon {
+  min-width: 40px;
+  min-height: 40px;
+}
+
+/* ── 역본 추가 모달 ─────────────────────────────────────── */
+.bible-verse-add-check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: var(--size-4-2) 0;
+}
+
+.bible-verse-add-check-row button {
+  flex-shrink: 0;
+}
+
+.bible-verse-add-check {
+  flex: 1;
+  min-height: 2.5em;
+  font-size: var(--font-ui-small);
+}
+
+.bible-verse-add-check.is-muted { color: var(--text-muted); }
+.bible-verse-add-check.is-ok { color: var(--text-success); }
+.bible-verse-add-check.is-warn { color: var(--text-warning); }
+.bible-verse-add-check.is-error { color: var(--text-error); }
+
+.bible-verse-add-check-fix {
+  margin-left: 6px;
+  font-size: var(--font-ui-smaller);
+}

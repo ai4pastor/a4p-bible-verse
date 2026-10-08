@@ -1,9 +1,21 @@
 import { App, PluginSettingTab, Setting, normalizePath } from "obsidian";
 import type BibleVersePlugin from "./main";
+import { AddVersionModal } from "./add-version-modal";
+import { QuoteTitleScan } from "./bible-data";
+import { confirmModal } from "./confirm-modal";
 import { FolderSuggest } from "./folder-suggest";
 import { normalizeFolderPath } from "./paths";
-import { InsertFormat, VERSIONS, Version } from "./types";
-import { VersionDef, cloneDefaultVersions } from "./versions";
+import { InsertFormat, Version } from "./types";
+import {
+  DEFAULT_VERSIONS,
+  VersionDef,
+  VersionFixes,
+  cloneDefaultVersions,
+  isDefaultVersionList,
+  normalizeVersionName,
+  shortLabel,
+  versionNames,
+} from "./versions";
 
 export interface BibleVerseSettings {
   /** 볼트 루트 기준 구약 성경 폴더 경로 — 빈 값이면 미설정. 하위 책 폴더는 자동 탐색 */
@@ -28,7 +40,7 @@ export interface BibleVerseSettings {
   suggestTrigger: string;
   /** 병렬 삽입 자동완성 트리거 (예: ;;;요3:16 → 두 역본 동시 삽입) */
   parallelTrigger: string;
-  /** 병렬 삽입에 쓸 역본 쌍 [주 역본, 병렬 역본] */
+  /** 병렬 삽입에 쓸 역본 쌍 [주 역본, 병렬 역본] — 둘 다 versions 안, 역본이 2개 이상이면 서로 다름 */
   parallelVersions: [Version, Version];
   /** "인용한 설교"를 찾을 폴더 — 비우면 성경·주석 폴더 제외 전체 볼트 */
   sermonFolder: string;
@@ -64,8 +76,25 @@ export const DEFAULT_SETTINGS: BibleVerseSettings = {
   enableKeywordSearch: true,
 };
 
+type StatusKind = "ok" | "warn";
+interface StatusLine {
+  text: string;
+  kind: StatusKind;
+}
+
 export class BibleVerseSettingTab extends PluginSettingTab {
   plugin: BibleVersePlugin;
+  /** 역본 섹션 상태줄 — 구조 변경으로 다시 그려도 마지막 안내를 유지한다 */
+  private versionStatus: StatusLine | null = null;
+  private versionStatusEl: HTMLElement | null = null;
+  /** 병렬 삽입 섹션 상태줄 */
+  private parallelStatus: StatusLine | null = null;
+  /** 표본 노트(창1_1·시23_1·요3_16) 스캔 결과 — 탭이 열려 있는 동안 캐시, "노트에서 찾기"로 갱신 */
+  private scan: QuoteTitleScan | null = null;
+  private scanning = false;
+  /** 역본 행의 배지 영역 — 스캔이 끝나면 전체를 다시 그리지 않고 제자리에서 갱신 */
+  private badgeEls = new Map<string, HTMLElement>();
+  private detectedEl: HTMLElement | null = null;
 
   constructor(app: App, plugin: BibleVersePlugin) {
     super(app, plugin);
@@ -75,6 +104,9 @@ export class BibleVerseSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
+    this.badgeEls.clear();
+    this.detectedEl = null;
+    this.versionStatusEl = null;
 
     this.addFolderField(containerEl, {
       name: "구약 성경 폴더",
@@ -84,6 +116,7 @@ export class BibleVerseSettingTab extends PluginSettingTab {
         this.plugin.settings.otPath = v;
         this.plugin.bibleData.invalidate();
         this.plugin.verseIndex.invalidate();
+        this.scan = null;
       },
       validate: () => this.plugin.bibleData.validateTestament("구약"),
     });
@@ -96,20 +129,12 @@ export class BibleVerseSettingTab extends PluginSettingTab {
         this.plugin.settings.ntPath = v;
         this.plugin.bibleData.invalidate();
         this.plugin.verseIndex.invalidate();
+        this.scan = null;
       },
       validate: () => this.plugin.bibleData.validateTestament("신약"),
     });
 
-    new Setting(containerEl)
-      .setName("기본 역본")
-      .setDesc("모달을 열 때 처음 선택되는 역본입니다.")
-      .addDropdown((drop) => {
-        for (const v of VERSIONS) drop.addOption(v, v);
-        drop.setValue(this.plugin.settings.defaultVersion).onChange(async (value) => {
-          this.plugin.settings.defaultVersion = value as Version;
-          await this.plugin.persist();
-        });
-      });
+    this.renderVersionSection(containerEl);
 
     new Setting(containerEl)
       .setName("삽입 형식")
@@ -183,11 +208,11 @@ export class BibleVerseSettingTab extends PluginSettingTab {
       new Setting(containerEl)
         .setName("키워드 검색 대상 역본")
         .setDesc(
-          "본문 키워드 검색(예: \"사랑 은혜\") 시 현재 선택한 역본에서만 찾을지, 5개 역본 전체에서 찾을지 정합니다. 첫 키워드 검색 시 인덱스 생성에 몇 초가 걸리며, 이후에는 캐시로 바로 검색됩니다.",
+          "본문 키워드 검색(예: \"사랑 은혜\") 시 현재 선택한 역본에서만 찾을지, 등록한 역본 전체에서 찾을지 정합니다. 첫 키워드 검색 시 인덱스 생성에 몇 초가 걸리며, 이후에는 캐시로 바로 검색됩니다.",
         )
         .addDropdown((drop) => {
           drop.addOption("current", "현재 선택 역본만");
-          drop.addOption("all", "전체 5역본");
+          drop.addOption("all", `등록된 역본 전체 (${this.plugin.settings.versions.length}개)`);
           drop
             .setValue(this.plugin.settings.keywordSearchScope)
             .onChange(async (value) => {
@@ -253,28 +278,386 @@ export class BibleVerseSettingTab extends PluginSettingTab {
       .setName("병렬 역본 — 주 역본")
       .setDesc("본문으로 먼저 들어가는 역본입니다.")
       .addDropdown((drop) => {
-        for (const v of VERSIONS) drop.addOption(v, v);
+        for (const def of this.plugin.settings.versions) drop.addOption(def.name, def.name);
         drop
           .setValue(this.plugin.settings.parallelVersions[0])
-          .onChange(async (value) => {
-            this.plugin.settings.parallelVersions[0] = value as Version;
-            await this.plugin.persist();
-          });
+          .onChange((value) => void this.setParallel(0, value));
       });
 
     new Setting(containerEl)
       .setName("병렬 역본 — 병렬 역본")
       .setDesc("각 절 아래 이탤릭으로 따라가는 역본입니다.")
       .addDropdown((drop) => {
-        for (const v of VERSIONS) drop.addOption(v, v);
+        for (const def of this.plugin.settings.versions) drop.addOption(def.name, def.name);
         drop
           .setValue(this.plugin.settings.parallelVersions[1])
-          .onChange(async (value) => {
-            this.plugin.settings.parallelVersions[1] = value as Version;
-            await this.plugin.persist();
-          });
+          .onChange((value) => void this.setParallel(1, value));
       });
+
+    const parallelStatusEl = containerEl.createDiv({ cls: "bible-verse-settings-status" });
+    this.renderStatusLine(parallelStatusEl, this.parallelStatus);
   }
+
+  hide(): void {
+    // 다음에 열 때 표본을 다시 읽고, 지난 안내는 지운다
+    this.scan = null;
+    this.versionStatus = null;
+    this.parallelStatus = null;
+    super.hide();
+  }
+
+  /** 구조가 바뀐 뒤 전체를 다시 그리되 스크롤 위치는 유지 (부분 갱신은 아래 드롭다운이 낡은 값을 보인다) */
+  private rerender() {
+    const top = this.containerEl.scrollTop;
+    this.display();
+    this.containerEl.scrollTop = top;
+  }
+
+  // ── 역본 섹션 ───────────────────────────────────────────
+
+  private renderVersionSection(containerEl: HTMLElement) {
+    const s = this.plugin.settings;
+    new Setting(containerEl).setName("역본").setHeading();
+    containerEl.createEl("p", {
+      cls: "bible-verse-settings-help",
+      text: "구절 노트의 본문 섹션(## 📜 본문) 아래에 `> [!quote] 역본 이름` 콜아웃으로 들어 있는 역본을 등록합니다. 이 순서가 모달 역본 버튼·Tab 전환·자동완성 순서가 됩니다. 등록만 바꾸는 것이라 구절 노트는 바뀌지 않습니다.",
+    });
+    containerEl.createDiv({
+      cls: "bible-verse-version-caption",
+      text: "오른쪽 칸 = 모달 버튼에 보일 짧은 이름 (비우면 이름 그대로)",
+    });
+
+    const count = s.versions.length;
+    s.versions.forEach((def, index) => this.renderVersionRow(containerEl, def, index, count));
+
+    this.detectedEl = containerEl.createDiv({ cls: "bible-verse-version-detected" });
+    this.renderDetected();
+
+    const actions = new Setting(containerEl).setClass("bible-verse-version-actions");
+    actions.addButton((btn) =>
+      btn
+        .setButtonText("노트에서 찾기")
+        .setTooltip("표본 노트 3곳(창1_1·시23_1·요3_16)에서 아직 등록하지 않은 역본 콜아웃을 찾습니다")
+        .onClick(() => void this.rescan(true)),
+    );
+    actions.addButton((btn) =>
+      btn
+        .setButtonText("역본 추가")
+        .setCta()
+        .onClick(() => void this.openAddModal()),
+    );
+    actions.addButton((btn) => {
+      btn.setButtonText("기본 5역본으로 되돌리기");
+      if (isDefaultVersionList(s.versions)) {
+        btn.buttonEl.addClass("is-blocked");
+        btn.setTooltip("이미 기본 상태입니다");
+      } else {
+        btn.onClick(() => void this.resetVersions());
+      }
+    });
+
+    this.versionStatusEl = containerEl.createDiv({ cls: "bible-verse-settings-status" });
+    this.renderStatusLine(this.versionStatusEl, this.versionStatus);
+
+    new Setting(containerEl)
+      .setName("기본 역본")
+      .setDesc("모달을 열 때 처음 선택되는 역본입니다.")
+      .addDropdown((drop) => {
+        for (const def of s.versions) drop.addOption(def.name, def.name);
+        drop.setValue(s.defaultVersion).onChange(async (value) => {
+          await this.plugin.updateVersionSettings({ defaultVersion: value });
+          this.rerender(); // 행 배지(기본 역본) 갱신
+        });
+      });
+
+    void this.ensureScan();
+  }
+
+  private renderVersionRow(
+    containerEl: HTMLElement,
+    def: VersionDef,
+    index: number,
+    count: number,
+  ) {
+    const setting = new Setting(containerEl)
+      .setName(def.name)
+      .setClass("bible-verse-version-row");
+    this.badgeEls.set(def.name, setting.descEl);
+    this.fillBadges(def.name, count);
+
+    setting.addText((text) => {
+      text.setPlaceholder("짧은 이름 (선택)").setValue(def.short ?? "");
+      text.inputEl.maxLength = 6;
+      text.inputEl.addClass("bible-verse-version-short");
+      text.inputEl.title = "모달 역본 버튼에 보일 짧은 이름 (6자 이내, 비우면 이름 그대로)";
+      // 키 입력마다 다시 그리면 포커스를 잃는다 — 입력을 마쳤을 때(blur·Enter)만 저장
+      text.inputEl.addEventListener("change", () => void this.saveShort(index, text.inputEl));
+    });
+    setting.addExtraButton((btn) => {
+      btn.setIcon("arrow-up").setTooltip("위로");
+      if (index === 0) btn.extraSettingsEl.addClass("is-blocked");
+      else btn.onClick(() => void this.moveVersion(index, -1));
+    });
+    setting.addExtraButton((btn) => {
+      btn.setIcon("arrow-down").setTooltip("아래로");
+      if (index === count - 1) btn.extraSettingsEl.addClass("is-blocked");
+      else btn.onClick(() => void this.moveVersion(index, 1));
+    });
+    setting.addExtraButton((btn) => {
+      btn.setIcon("trash-2");
+      if (count === 1) {
+        // setDisabled는 툴팁까지 막는다 — 흐리게만 두고 눌렀을 때 이유를 보여준다
+        btn.setTooltip("역본은 최소 1개 있어야 합니다");
+        btn.extraSettingsEl.addClass("is-blocked");
+        btn.onClick(() =>
+          this.setVersionStatus(
+            "warn",
+            "역본은 최소 1개 있어야 합니다. 다른 역본을 먼저 추가한 뒤 빼주세요.",
+          ),
+        );
+      } else {
+        btn.setTooltip("목록에서 빼기 (노트는 바뀌지 않음)");
+        btn.onClick(() => void this.removeVersion(index));
+      }
+    });
+  }
+
+  /** 행 배지: 기본 역본·병렬 쌍·마지막 역본·표본 노트에 콜아웃 없음 */
+  private fillBadges(name: string, count: number) {
+    const el = this.badgeEls.get(name);
+    if (!el) return;
+    el.empty();
+    const s = this.plugin.settings;
+    const add = (text: string, warn = false) =>
+      el.createSpan({ cls: `bible-verse-version-badge${warn ? " is-warn" : ""}`, text });
+    if (name === s.defaultVersion) add("기본 역본");
+    if (name === s.parallelVersions[0]) add("병렬 삽입 주 역본");
+    if (name === s.parallelVersions[1] && s.parallelVersions[1] !== s.parallelVersions[0]) {
+      add("병렬 삽입 병렬 역본");
+    }
+    if (count === 1) add("마지막 역본 — 뺄 수 없음");
+    if (this.scan && this.scan.total > 0 && !this.scan.titles.some((t) => t.title === name)) {
+      add("표본 노트에서 콜아웃을 찾지 못함", true);
+    }
+  }
+
+  private refreshBadges() {
+    const count = this.plugin.settings.versions.length;
+    for (const name of this.badgeEls.keys()) this.fillBadges(name, count);
+  }
+
+  /** 표본에 있지만 아직 등록하지 않은 제목을 칩으로 — 클릭하면 바로 등록 */
+  private renderDetected() {
+    const el = this.detectedEl;
+    if (!el) return;
+    el.empty();
+    if (!this.scan || this.scan.total === 0) return;
+    const registered = versionNames(this.plugin.settings.versions);
+    const fresh = this.scan.titles.filter((t) => !registered.includes(t.title));
+    if (fresh.length === 0) return;
+    el.createSpan({ cls: "bible-verse-context-label", text: "노트에서 찾은 새 역본:" });
+    for (const { title } of fresh) {
+      const chip = el.createEl("button", { cls: "bible-verse-chip", text: `+ ${title}` });
+      chip.title = `'${title}' 역본을 바로 등록합니다`;
+      chip.addEventListener("click", () => void this.addDetected(title));
+    }
+  }
+
+  /** 탭이 열려 있는 동안 표본 노트를 한 번만 읽어 배지·칩을 채운다 (폴더 미설정이면 생략) */
+  private async ensureScan() {
+    if (this.scan || this.scanning) return;
+    const { otPath, ntPath } = this.plugin.settings;
+    if (!otPath && !ntPath) return;
+    await this.rescan(false);
+  }
+
+  /** explicit=true는 "노트에서 찾기" 버튼 — 결과가 없을 때도 알린다 (자동 스캔은 조용히) */
+  private async rescan(explicit: boolean) {
+    if (this.scanning) return;
+    this.scanning = true;
+    let result: QuoteTitleScan;
+    try {
+      result = await this.plugin.bibleData.detectQuoteTitles();
+    } catch (err) {
+      console.warn("[a4p-bible-verse] 표본 노트 확인 실패", err);
+      result = { titles: [], total: 0, reason: "표본 노트를 읽지 못했습니다." };
+    }
+    this.scanning = false;
+    this.scan = result;
+    if (!this.detectedEl?.isConnected) return; // 탭이 닫혔다
+    this.renderDetected();
+    this.refreshBadges();
+    if (!explicit) return;
+
+    const { otPath, ntPath } = this.plugin.settings;
+    if (!otPath && !ntPath) {
+      this.setVersionStatus("warn", "구약·신약 성경 폴더를 먼저 등록해주세요.");
+    } else if (result.total === 0) {
+      this.setVersionStatus(
+        "warn",
+        "표본 노트를 읽지 못했습니다. 위의 성경 폴더 '검증'을 먼저 해주세요.",
+      );
+    } else {
+      const registered = versionNames(this.plugin.settings.versions);
+      const fresh = result.titles.filter((t) => !registered.includes(t.title));
+      this.setVersionStatus(
+        "ok",
+        fresh.length === 0
+          ? `표본 노트 ${result.total}곳(창1_1·시23_1·요3_16)에 아직 등록하지 않은 역본 콜아웃이 없습니다.`
+          : `노트에서 새 역본 ${fresh.length}개를 찾았습니다 — 위 칩을 누르면 바로 등록됩니다.`,
+      );
+    }
+  }
+
+  private async saveShort(index: number, inputEl: HTMLInputElement) {
+    const s = this.plugin.settings;
+    const def = s.versions[index];
+    if (!def) return;
+    const short = normalizeVersionName(inputEl.value);
+    const effective = short && short !== def.name ? short : undefined;
+    const clash = effective
+      ? s.versions.find((d, i) => i !== index && shortLabel(d) === effective)
+      : undefined;
+    if (clash) {
+      this.setVersionStatus(
+        "warn",
+        `짧은 이름 '${effective}'은(는) 이미 '${clash.name}'이(가) 쓰고 있어 버튼이 구분되지 않습니다.`,
+      );
+      inputEl.value = def.short ?? "";
+      return;
+    }
+    const versions = s.versions.map((d, i) =>
+      i === index ? (effective ? { name: d.name, short: effective } : { name: d.name }) : d,
+    );
+    await this.plugin.updateVersionSettings({ versions });
+    inputEl.value = this.plugin.settings.versions[index]?.short ?? "";
+    this.setVersionStatus(
+      "ok",
+      effective
+        ? `'${def.name}' 역본의 모달 버튼 이름을 '${effective}'(으)로 바꿨습니다.`
+        : `'${def.name}' 역본의 모달 버튼 이름을 이름 그대로로 되돌렸습니다.`,
+    );
+  }
+
+  private async moveVersion(index: number, dir: -1 | 1) {
+    const versions = [...this.plugin.settings.versions];
+    const target = index + dir;
+    if (target < 0 || target >= versions.length) return;
+    [versions[index], versions[target]] = [versions[target], versions[index]];
+    await this.plugin.updateVersionSettings({ versions });
+    this.rerender();
+  }
+
+  private async removeVersion(index: number) {
+    const s = this.plugin.settings;
+    const removed = s.versions[index];
+    if (!removed || s.versions.length <= 1) return;
+    const fixes = await this.plugin.updateVersionSettings({
+      versions: s.versions.filter((_, i) => i !== index),
+    });
+    this.versionStatus = {
+      kind: "ok",
+      text: `'${removed.name}' 역본을 목록에서 뺐습니다. 노트는 그대로이며 '노트에서 찾기'로 다시 추가할 수 있습니다.${this.describeFixes(fixes, removed.name)}`,
+    };
+    this.rerender();
+  }
+
+  /** sanitize가 기본 역본·병렬 쌍을 고쳤으면 어디서 다시 고를 수 있는지까지 알려준다 */
+  private describeFixes(fixes: VersionFixes, removedName?: string): string {
+    const parts: string[] = [];
+    if (fixes.defaultVersion) {
+      parts.push(
+        removedName
+          ? ` 기본 역본이 '${removedName}'이었으므로 '${fixes.defaultVersion}'(으)로 바꿨습니다 — 아래 '기본 역본'에서 다시 고를 수 있습니다.`
+          : ` 기본 역본을 '${fixes.defaultVersion}'(으)로 맞췄습니다.`,
+      );
+    }
+    if (fixes.parallelVersions) {
+      parts.push(
+        ` 병렬 삽입 역본 쌍을 '${fixes.parallelVersions[0]} · ${fixes.parallelVersions[1]}'(으)로 맞췄습니다 — 맨 아래 '병렬 삽입'에서 다시 고를 수 있습니다.`,
+      );
+    }
+    return parts.join("");
+  }
+
+  private async addDetected(title: string) {
+    await this.plugin.updateVersionSettings({
+      versions: [...this.plugin.settings.versions, { name: title }],
+    });
+    this.versionStatus = {
+      kind: "ok",
+      text: `'${title}' 역본을 추가했습니다. 모달 버튼에는 '${title}'(으)로 표시됩니다 — 오른쪽 칸에서 짧은 이름을 정할 수 있습니다.`,
+    };
+    this.rerender();
+  }
+
+  private async openAddModal() {
+    const result = await AddVersionModal.ask(this.app, this.plugin);
+    if (!result) return;
+    const label = result.short ?? result.name;
+    this.versionStatus = result.foundInSamples
+      ? {
+          kind: "ok",
+          text: `'${result.name}' 역본을 추가했습니다. 모달 버튼에는 '${label}'(으)로 표시됩니다.`,
+        }
+      : {
+          kind: "warn",
+          text: `'${result.name}' 역본을 추가했습니다. 표본 노트에는 아직 '${result.name}' 콜아웃이 없어 모달에 '(${result.name} 본문 없음)'으로 나옵니다. 노트에 콜아웃을 넣은 뒤 '노트에서 찾기'로 확인하세요.`,
+        };
+    this.rerender();
+  }
+
+  private async resetVersions() {
+    const custom = this.plugin.settings.versions
+      .filter((d) => !DEFAULT_VERSIONS.some((x) => x.name === d.name))
+      .map((d) => d.name);
+    const ok = await confirmModal(this.app, {
+      title: "기본 5역본으로 되돌릴까요?",
+      body: [
+        `${custom.length > 0 ? `직접 추가한 역본(${custom.join(", ")})과 ` : ""}바꾼 순서·짧은 이름이 지워지고, 새번역·개역개정·쉬운성경·NIV·KJV 순서로 돌아갑니다.`,
+        "구절 노트는 바뀌지 않습니다.",
+      ],
+      okText: "되돌리기",
+      warning: true,
+    });
+    if (!ok) return;
+    const fixes = await this.plugin.updateVersionSettings({ versions: cloneDefaultVersions() });
+    this.versionStatus = {
+      kind: "ok",
+      text: `기본 5역본(새번역·개역개정·쉬운성경·NIV·KJV)으로 되돌렸습니다.${this.describeFixes(fixes)}`,
+    };
+    this.rerender();
+  }
+
+  private async setParallel(slot: 0 | 1, value: string) {
+    const pair = [...this.plugin.settings.parallelVersions] as [string, string];
+    pair[slot] = value;
+    const fixes = await this.plugin.updateVersionSettings({ parallelVersions: pair });
+    // 같은 역본을 둘 다 고르면 sanitize가 병렬 역본 쪽을 다른 역본으로 바꾼다
+    this.parallelStatus = fixes.parallelVersions
+      ? {
+          kind: "warn",
+          text: `주 역본과 병렬 역본은 서로 달라야 합니다 — 병렬 역본을 '${this.plugin.settings.parallelVersions[1]}'(으)로 바꿨습니다.`,
+        }
+      : null;
+    this.rerender(); // 행 배지(병렬 역본)와 보정된 드롭다운 값 반영
+  }
+
+  private setVersionStatus(kind: StatusKind, text: string) {
+    this.versionStatus = { kind, text };
+    if (this.versionStatusEl) this.renderStatusLine(this.versionStatusEl, this.versionStatus);
+  }
+
+  private renderStatusLine(el: HTMLElement, line: StatusLine | null) {
+    el.empty();
+    if (!line) return;
+    el.createEl("p", {
+      text: line.text,
+      cls: `bible-verse-settings-status-line${line.kind === "warn" ? " is-warn" : ""}`,
+    });
+  }
+
+  // ── 폴더 경로 필드 ───────────────────────────────────────
 
   /** 폴더 경로 설정 공통 필드 — 자동완성 + 정규화 + (선택) 검증 버튼. */
   private addFolderField(

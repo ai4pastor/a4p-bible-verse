@@ -1,9 +1,5 @@
-import { DEFAULT_VERSIONS } from "./versions";
-
-/** 역본 이름 = 구절 노트 `[!quote]` 콜아웃 제목. 어떤 이름을 쓸지는 설정의 역본 목록이 정한다 */
+/** 역본 이름 = 구절 노트 `[!quote]` 콜아웃 제목. 어떤 이름을 쓸지는 설정의 역본 목록(versions.ts)이 정한다 */
 export type Version = string;
-/** @deprecated 임시 — 모달·자동완성·설정 드롭다운이 설정 역본 목록으로 옮겨가기 전까지만 쓰는 기본 이름 배열 */
-export const VERSIONS: readonly Version[] = DEFAULT_VERSIONS.map((d) => d.name);
 
 /** 삽입 형식 — 콜아웃 블록 vs 일반 텍스트(wikilink 유지) */
 export type InsertFormat = "callout" | "text";
