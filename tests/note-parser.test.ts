@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   extractHeadingSection,
   extractVerseTexts,
+  listQuoteTitles,
   stripAnnotations,
 } from "../src/note-parser";
 
@@ -131,18 +132,19 @@ describe("extractVerseTexts — 엣지 케이스", () => {
     expect(extractVerseTexts(content)["새번역"]).toBe("첫 줄\n둘째 줄");
   });
 
-  it("알 수 없는 콜아웃 라벨은 무시", () => {
+  it("등록되지 않은 제목의 콜아웃도 제목 그대로 추출 (역본 필터는 설정 목록이 담당)", () => {
     const content = `## 📜 본문
 
 > [!quote] 개역한글
-> 무시되어야 함
+> 옛 역본 본문
 
 > [!quote] 새번역
 > 유효한 본문
 `;
     const texts = extractVerseTexts(content);
     expect(texts["새번역"]).toBe("유효한 본문");
-    expect(Object.keys(texts).length).toBe(1);
+    expect(texts["개역한글"]).toBe("옛 역본 본문");
+    expect(Object.keys(texts)).toEqual(["개역한글", "새번역"]);
   });
 
   it("다음 헤딩 이후 콜아웃은 무시", () => {
@@ -159,5 +161,75 @@ describe("extractVerseTexts — 엣지 케이스", () => {
     const texts = extractVerseTexts(content);
     expect(texts["새번역"]).toBe("본문");
     expect(texts["NIV"]).toBeUndefined();
+  });
+});
+
+describe("extractVerseTexts — 제목 무관 파서", () => {
+  const wrap = (body: string) => `## 📜 본문\n\n${body}`;
+
+  it("제목은 NFC로 정규화하고 앞뒤·연속 공백을 정리한다 (자모 분리 제목도 같은 키)", () => {
+    const nfd = "새번역".normalize("NFD");
+    const texts = extractVerseTexts(wrap(`> [!quote]   ${nfd}  \n> 본문\n`));
+    expect(texts["새번역"]).toBe("본문");
+  });
+
+  it("대소문자는 구분한다 (niv ≠ NIV)", () => {
+    const texts = extractVerseTexts(wrap(`> [!quote] niv\n> lower\n`));
+    expect(texts["niv"]).toBe("lower");
+    expect(texts["NIV"]).toBeUndefined();
+  });
+
+  it("접힘 표시 [!quote]+ / [!quote]- 와 대문자 QUOTE 허용", () => {
+    const texts = extractVerseTexts(
+      wrap(`> [!quote]+ 새번역\n> 펼침\n\n> [!quote]- NIV\n> folded\n\n> [!QUOTE] KJV\n> upper\n`),
+    );
+    expect(texts).toEqual({ 새번역: "펼침", NIV: "folded", KJV: "upper" });
+  });
+
+  it("공백 없는 >[!quote]NIV 도 인식", () => {
+    expect(extractVerseTexts(wrap(`>[!quote]NIV\n>text\n`))["NIV"]).toBe("text");
+  });
+
+  it("빈 줄 없이 이어진 콜아웃은 앞 콜아웃에 흡수되지 않는다", () => {
+    const texts = extractVerseTexts(wrap(`> [!quote] 새번역\n> 첫 본문\n> [!quote] ESV\n> second\n`));
+    expect(texts["새번역"]).toBe("첫 본문");
+    expect(texts["ESV"]).toBe("second");
+  });
+
+  it("CRLF 줄바꿈도 \\r 없이 수집", () => {
+    const texts = extractVerseTexts(
+      `## 📜 본문\r\n\r\n> [!quote] 새번역\r\n> 첫 줄\r\n> 둘째 줄\r\n`,
+    );
+    expect(texts["새번역"]).toBe("첫 줄\n둘째 줄");
+  });
+
+  it("제목 없는 콜아웃과 본문 없는 콜아웃은 제외", () => {
+    const texts = extractVerseTexts(
+      wrap(`> [!quote]\n> 제목 없음\n\n> [!quote] ESV\n\n> [!quote] NIV\n> ok\n`),
+    );
+    expect(Object.keys(texts)).toEqual(["NIV"]);
+  });
+});
+
+describe("listQuoteTitles — 본문 섹션의 콜아웃 제목", () => {
+  it("등장 순서대로, 중복 제거, 본문이 비어도 포함, 다른 섹션은 제외", () => {
+    const titles = listQuoteTitles(
+      `## 📜 본문\n\n> [!quote] 새번역\n> a\n\n> [!quote] ESV\n\n> [!quote] 새번역\n> b\n\n## 🧠 원어 핵심어\n\n> [!quote] 헬라어\n> x\n`,
+    );
+    expect(titles).toEqual(["새번역", "ESV"]);
+  });
+
+  it("본문 섹션이 없으면 빈 배열", () => {
+    expect(listQuoteTitles("# 제목\n\n> [!quote] NIV\n> x")).toEqual([]);
+  });
+
+  it("실제 노트(요3_16.md)는 기본 5역본 제목", () => {
+    expect(listQuoteTitles(fixture("요3_16.md"))).toEqual([
+      "새번역",
+      "개역개정",
+      "쉬운성경",
+      "NIV",
+      "KJV",
+    ]);
   });
 });

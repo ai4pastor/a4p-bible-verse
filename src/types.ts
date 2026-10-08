@@ -1,5 +1,9 @@
-export const VERSIONS = ["새번역", "개역개정", "쉬운성경", "NIV", "KJV"] as const;
-export type Version = (typeof VERSIONS)[number];
+import { DEFAULT_VERSIONS } from "./versions";
+
+/** 역본 이름 = 구절 노트 `[!quote]` 콜아웃 제목. 어떤 이름을 쓸지는 설정의 역본 목록이 정한다 */
+export type Version = string;
+/** @deprecated 임시 — 모달·자동완성·설정 드롭다운이 설정 역본 목록으로 옮겨가기 전까지만 쓰는 기본 이름 배열 */
+export const VERSIONS: readonly Version[] = DEFAULT_VERSIONS.map((d) => d.name);
 
 /** 삽입 형식 — 콜아웃 블록 vs 일반 텍스트(wikilink 유지) */
 export type InsertFormat = "callout" | "text";
@@ -40,7 +44,7 @@ export interface IndexEntry {
   /** 노트 파일명(확장자 제외) — wikilink 대상 (예: "요3_16") */
   linkTarget: string;
   path: string;
-  /** 역본별 본문 (원문 그대로 — 각주 정리는 삽입 시점에 적용) */
+  /** 콜아웃 제목별 본문 (원문 그대로 — 각주 정리는 삽입 시점에 적용). 등록 역본 필터는 소비자 몫 */
   texts: Partial<Record<Version, string>>;
 }
 
@@ -53,7 +57,7 @@ export interface VerseData {
   linkTarget: string;
   /** 볼트 내 전체 경로 (백링크 대조용) */
   path?: string;
-  /** 역본별 본문. 노트에 해당 역본 콜아웃이 없으면 undefined */
+  /** 콜아웃 제목별 본문. 노트에 해당 제목의 콜아웃이 없으면 undefined */
   texts: Partial<Record<Version, string>>;
   /** frontmatter 관련구절의 링크 대상들 (예: ["롬5_8", "요일4_9"]) */
   related?: string[];

@@ -3,6 +3,7 @@ import type BibleVersePlugin from "./main";
 import { FolderSuggest } from "./folder-suggest";
 import { normalizeFolderPath } from "./paths";
 import { InsertFormat, VERSIONS, Version } from "./types";
+import { VersionDef, cloneDefaultVersions } from "./versions";
 
 export interface BibleVerseSettings {
   /** 볼트 루트 기준 구약 성경 폴더 경로 — 빈 값이면 미설정. 하위 책 폴더는 자동 탐색 */
@@ -11,6 +12,13 @@ export interface BibleVerseSettings {
   ntPath: string;
   /** @deprecated v2 이하의 단일 성경 폴더 경로 — 마이그레이션에서 otPath/ntPath로 흡수 후 제거 */
   biblePath?: string;
+  /**
+   * 등록 역본 목록 (순서 = 모달 버튼·Tab·자동완성 순서). name은 구절 노트 `## 📜 본문`의
+   * `> [!quote] 이름` 콜아웃 제목과 정확히 같아야 한다. 파서는 모든 콜아웃을 읽으므로 이 목록은
+   * UI 어휘일 뿐 — 바꿔도 본문 인덱스는 다시 만들지 않는다. 불변식은 sanitizeVersionSettings.
+   */
+  versions: VersionDef[];
+  /** 모달을 열 때 처음 선택되는 역본 — 반드시 versions 안의 이름 */
   defaultVersion: Version;
   /** 삽입 형식 — 콜아웃 블록 vs 일반 텍스트(wikilink 유지) */
   insertFormat: InsertFormat;
@@ -28,7 +36,7 @@ export interface BibleVerseSettings {
   stripAnnotations: boolean;
   /** 볼트 루트 기준 주석 폴더 경로 — 성경 폴더와 무관하게 지정. 비우면 주석 기능 끔 */
   commentaryPath: string;
-  /** 키워드 본문 검색 대상 — "current": 현재 선택 역본만, "all": 5역본 전체 */
+  /** 키워드 본문 검색 대상 — "current": 현재 선택 역본만, "all": 등록 역본 전체 */
   keywordSearchScope: "current" | "all";
   /**
    * 본문 키워드 검색 사용 여부 (저사양 PC용). 끄면 인덱스 빌드(3만 파일 읽기)·디스크 캐시
@@ -41,6 +49,7 @@ export const DEFAULT_SETTINGS: BibleVerseSettings = {
   // 경로는 의도적으로 빈 값 — 볼트마다 위치가 다르므로 사용자가 직접 선택한다
   otPath: "",
   ntPath: "",
+  versions: cloneDefaultVersions(),
   defaultVersion: "새번역",
   insertFormat: "callout",
   verseNewline: true,

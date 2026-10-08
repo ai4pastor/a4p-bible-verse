@@ -5,6 +5,7 @@ import { SETTINGS_VERSION, migrateSettings } from "./settings-migrate";
 import { VerseInsertModal } from "./modal";
 import { BibleVerseSuggest } from "./suggest";
 import { VerseIndex } from "./verse-index";
+import { VersionFixes, sanitizeVersionSettings } from "./versions";
 import {
   BibleVerseSettings,
   BibleVerseSettingTab,
@@ -115,7 +116,12 @@ export default class BibleVersePlugin extends Plugin {
 
   async loadState() {
     const raw = ((await this.loadData()) ?? {}) as Partial<PersistedState>;
-    this.settings = { ...DEFAULT_SETTINGS, ...(raw.settings ?? {}) };
+    // 역본 불변식 보정 — 순수 함수라 I/O 없음(부팅 비용 0). 배열을 새로 만들어 DEFAULT_SETTINGS와의
+    // 공유(얕은 스프레드 → 제자리 수정이 기본값을 오염시키던 문제)도 끊는다.
+    this.settings = sanitizeVersionSettings({
+      ...DEFAULT_SETTINGS,
+      ...(raw.settings ?? {}),
+    }).settings;
     // 저장된 설정이 없으면(신규 설치) 마이그레이션 불필요 — 최신 버전으로 간주
     this.loadedSettingsVersion = raw.settings ? (raw.settingsVersion ?? 1) : SETTINGS_VERSION;
   }
@@ -133,6 +139,20 @@ export default class BibleVersePlugin extends Plugin {
       this.verseIndex.invalidate();
     }
     await this.persist();
+  }
+
+  /**
+   * 역본 목록·기본 역본·병렬 쌍을 바꾸는 유일한 경로 — 불변식 보정 후 저장한다.
+   * 목록은 UI 어휘일 뿐(파서는 모든 콜아웃을 읽음)이라 본문 인덱스는 무효화하지 않는다.
+   * 반환값은 보정된 항목 — 설정 탭이 "기본 역본을 X로 바꿨습니다" 안내에 쓴다.
+   */
+  async updateVersionSettings(
+    patch: Partial<Pick<BibleVerseSettings, "versions" | "defaultVersion" | "parallelVersions">>,
+  ): Promise<VersionFixes> {
+    const { settings, fixes } = sanitizeVersionSettings({ ...this.settings, ...patch });
+    this.settings = settings;
+    await this.persist();
+    return fixes;
   }
 
   async persist() {
