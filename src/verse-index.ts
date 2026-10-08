@@ -18,7 +18,9 @@ import { VERSE_FILE_RE, nfc } from "./verse-files";
 
 // v2: biblePath가 정규화된 경로로 기록되고 책 폴더 재귀 탐색으로 인식 집합이 달라질 수 있음
 // (구약/신약 분리 후에는 biblePath에 두 루트를 "\n"으로 이어 기록 — 값이 달라지면 자동 재빌드)
-const SCHEMA_VERSION = 2;
+// v3: 파서가 제목 무관 — 본문 섹션의 모든 [!quote] 콜아웃을 제목 그대로 담고, 콜아웃 경계 수정.
+// 역본 목록은 UI 어휘라 캐시 키에 넣지 않는다 (목록을 바꿔도 재빌드 없음).
+const SCHEMA_VERSION = 3;
 /** 청크 크기 — 청크마다 이벤트 루프에 양보해 UI 프리즈를 막는다 */
 const CHUNK_SIZE = 200;
 

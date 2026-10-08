@@ -6,7 +6,8 @@ import { extractHeadingSection, stripAnnotations } from "./note-parser";
 import { formatReference, parseLinkTarget, parseReference } from "./reference-parser";
 import { insertBlock } from "./insert";
 import { SearchHit, indexCoverage, searchVerses } from "./search";
-import { BibleReference, IndexEntry, VERSIONS, Version, VerseData } from "./types";
+import { BibleReference, IndexEntry, Version, VerseData } from "./types";
+import { shortLabel, versionNames } from "./versions";
 import { BUILD_CANCELLED } from "./verse-index";
 import { ConfirmBuildModal } from "./confirm-build-modal";
 
@@ -80,7 +81,8 @@ export class VerseInsertModal extends Modal {
     this.plugin = plugin;
     this.data = plugin.bibleData;
     this.editor = editor;
-    this.version = sessionVersion ?? plugin.settings.defaultVersion;
+    // 설정에서 뺀 역본이 세션 값으로 남아 있을 수 있다 — 목록 안의 값으로 되돌린다
+    this.version = this.resolveVersion(sessionVersion ?? plugin.settings.defaultVersion);
   }
 
   onOpen() {
@@ -303,6 +305,7 @@ export class VerseInsertModal extends Modal {
       this.ref = null;
       this.loaded = null;
       this.keywordHits = null;
+      this.renderVersionBar();
       this.setStatus(parsed.reason, "error");
       this.listEl.empty();
       this.contextEl.empty();
@@ -325,6 +328,7 @@ export class VerseInsertModal extends Modal {
       this.ref = null;
       this.loaded = null;
       this.keywordHits = null;
+      this.renderVersionBar();
       this.setStatus(outcome.reason, "error");
       this.listEl.empty();
       this.contextEl.empty();
@@ -339,18 +343,32 @@ export class VerseInsertModal extends Modal {
     this.highlight = -1;
     this.citing = this.data.citingNotes(outcome.result.verses.map((v) => v.path ?? ""));
 
-    const label = formatReference(parsed.ref);
-    const count = outcome.result.verses.length;
-    const notice = outcome.result.notice ? ` — ${outcome.result.notice}` : "";
-    this.setStatus(`${label} (${count}절)${notice}`, outcome.result.notice ? "warn" : "ok");
+    this.renderReferenceStatus();
     this.renderList();
     this.renderContext();
+  }
+
+  /** 참조 모드 상태줄 — 불러온 절 전부에 현재 역본 본문이 없으면 원인을 안내한다 */
+  private renderReferenceStatus() {
+    if (!this.ref || !this.loaded) return;
+    const { verses, notice } = this.loaded;
+    const label = formatReference(this.ref);
+    if (verses.length > 0 && !verses.some((v) => v.texts[this.version])) {
+      this.setStatus(
+        `${label} — 이 구절 노트에 '${this.version}' 콜아웃이 없습니다. Tab으로 다른 역본을 보세요.`,
+        "warn",
+      );
+      return;
+    }
+    const noticeText = notice ? ` — ${notice}` : "";
+    this.setStatus(`${label} (${verses.length}절)${noticeText}`, notice ? "warn" : "ok");
   }
 
   /** 본문 키워드 검색 — 첫 실행 시 인덱스를 빌드(진행률 표시)한 뒤 선형 스캔 */
   private async runKeywordSearch(query: string, id: number) {
     this.ref = null;
     this.loaded = null;
+    this.renderVersionBar();
 
     // 저사양 PC용 토글 — 꺼져 있으면 인덱스 빌드·캐시 로드 없이 안내만
     if (!this.plugin.settings.enableKeywordSearch) {
@@ -395,7 +413,7 @@ export class VerseInsertModal extends Modal {
 
     const versions: Version[] =
       this.plugin.settings.keywordSearchScope === "all"
-        ? [this.version, ...VERSIONS.filter((v) => v !== this.version)]
+        ? [this.version, ...this.names().filter((v) => v !== this.version)]
         : [this.version];
     const outcome = searchVerses(index.entries, query, { versions });
 
@@ -446,6 +464,7 @@ export class VerseInsertModal extends Modal {
     );
     this.listEl.empty();
     this.contextEl.empty();
+    this.renderVersionBar();
     this.updateInsertButton();
   }
 
@@ -455,20 +474,28 @@ export class VerseInsertModal extends Modal {
   }
 
   private renderVersionBar() {
+    this.syncVersionState();
     this.versionBarEl.empty();
-    for (const v of VERSIONS) {
+    // 참조 모드에서 불러온 절 전부에 본문이 없는 역본은 흐리게 — 이 구절에 어떤 역본이 있는지 한눈에
+    const loadedVerses = !this.keywordHits && this.loaded ? this.loaded.verses : null;
+    for (const def of this.plugin.settings.versions) {
+      const v = def.name;
+      const empty =
+        !!loadedVerses &&
+        loadedVerses.length > 0 &&
+        !loadedVerses.some((verse) => verse.texts[v]);
       const cls = [
         "bible-verse-version-btn",
         v === this.version ? "is-active" : "",
         v === this.secondary ? "is-secondary" : "",
+        empty ? "is-empty" : "",
       ]
         .filter(Boolean)
         .join(" ");
-      const btn = this.versionBarEl.createEl("button", {
-        cls,
-        text: v === "개역개정" ? "개역" : v === "쉬운성경" ? "쉬운" : v,
-      });
-      btn.title = `${v} — 클릭: 역본 선택 · Cmd+클릭: 병렬 역본 지정/해제`;
+      const btn = this.versionBarEl.createEl("button", { cls, text: shortLabel(def) });
+      btn.title = `${v} — 클릭: 역본 선택 · Cmd+클릭: 병렬 역본 지정/해제${
+        empty ? " · 이 구절에는 본문 없음" : ""
+      }`;
       btn.tabIndex = -1;
       btn.addEventListener("click", (e) => {
         if (e.metaKey || e.ctrlKey) this.toggleSecondary(v);
@@ -492,6 +519,7 @@ export class VerseInsertModal extends Modal {
     }
     this.listEl.empty();
     if (!this.loaded) return;
+    this.renderVersionBar(); // 불러온 절 기준 is-empty 갱신
     const multiChapter = this.loaded.verses.some(
       (v) => v.chapter !== this.loaded!.verses[0].chapter,
     );
@@ -1029,13 +1057,38 @@ export class VerseInsertModal extends Modal {
       void this.runSearch();
       return;
     }
+    this.renderReferenceStatus();
     this.renderList();
   }
 
+  /** 설정의 등록 역본 이름 (순서 = 버튼·Tab 순서) */
+  private names(): string[] {
+    return versionNames(this.plugin.settings.versions);
+  }
+
+  /** 목록에 없는 역본(설정에서 뺀 뒤 남은 세션 값 등)은 기본 역본 → 첫 항목으로 되돌린다 */
+  private resolveVersion(candidate: string | null): Version {
+    const names = this.names();
+    if (candidate && names.includes(candidate)) return candidate;
+    const def = this.plugin.settings.defaultVersion;
+    return names.includes(def) ? def : names[0];
+  }
+
+  /** 모달 내부 상태만 방어한다 — 설정값 자체는 sanitizeVersionSettings가 보장 */
+  private syncVersionState() {
+    this.version = this.resolveVersion(this.version);
+    if (
+      this.secondary &&
+      (this.secondary === this.version || !this.names().includes(this.secondary))
+    ) {
+      this.secondary = null;
+    }
+  }
+
   private cycleVersion(dir: 1 | -1) {
-    const idx = VERSIONS.indexOf(this.version);
-    const next = VERSIONS[(idx + dir + VERSIONS.length) % VERSIONS.length];
-    this.setVersion(next);
+    const names = this.names();
+    const idx = Math.max(0, names.indexOf(this.version));
+    this.setVersion(names[(idx + dir + names.length) % names.length]);
   }
 
   private moveHighlight(dir: 1 | -1) {
@@ -1138,7 +1191,7 @@ export class VerseInsertModal extends Modal {
     if (!this.plugin.settings.stripAnnotations) return entries;
     return entries.map((entry) => {
       const texts = { ...entry.texts };
-      for (const key of Object.keys(texts) as Version[]) {
+      for (const key of Object.keys(texts)) {
         texts[key] = stripAnnotations(texts[key]!);
       }
       return { ...entry, texts };

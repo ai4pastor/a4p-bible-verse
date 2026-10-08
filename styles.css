@@ -75,10 +75,14 @@
 .bible-verse-status.is-warn { color: var(--text-warning); }
 .bible-verse-status.is-error { color: var(--text-error); }
 
+/* 역본 버튼 바 — 등록 역본이 6~8개여도 줄바꿈으로 수용 (가로 스크롤은 숨은 항목을 못 알아채므로 미사용) */
 .bible-verse-versions {
   display: flex;
-  gap: 2px;
-  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 3px 2px;
+  flex-shrink: 1;
+  max-width: min(62%, 440px);
 }
 
 .bible-verse-version-btn {
@@ -88,6 +92,20 @@
   background: var(--background-secondary);
   box-shadow: none;
   cursor: pointer;
+  white-space: nowrap;
+  max-width: 7em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 참조 모드에서 불러온 절 전부에 본문이 없는 역본 */
+.bible-verse-version-btn.is-empty {
+  opacity: 0.45;
+}
+
+.is-mobile .bible-verse-version-btn {
+  padding: 6px 10px;
+  min-height: 32px;
 }
 
 .bible-verse-version-btn.is-active {

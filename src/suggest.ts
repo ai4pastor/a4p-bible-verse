@@ -10,7 +10,8 @@ import {
 import { formatVerses } from "./formatter";
 import type BibleVersePlugin from "./main";
 import { formatReference, parseReference } from "./reference-parser";
-import { BibleReference, VERSIONS, Version } from "./types";
+import { BibleReference, Version } from "./types";
+import { versionNames } from "./versions";
 
 interface VerseSuggestion {
   version: Version;
@@ -24,7 +25,7 @@ const MAX_QUERY_LEN = 30;
 
 /**
  * 에디터 자동완성.
- * - 일반 트리거(";;요3:16"): 역본 5개 제안 → 선택 역본으로 삽입
+ * - 일반 트리거(";;요3:16"): 설정에 등록된 역본을 제안 → 선택 역본으로 삽입
  * - 병렬 트리거(";;;요3:16"): 설정에 등록된 역본 쌍이 절마다 교차로 함께 삽입
  * 두 트리거가 겹치면(";;;"는 ";;"를 포함) 더 뒤에서 끝나는·더 긴 쪽이 이긴다.
  */
@@ -88,11 +89,14 @@ export class BibleVerseSuggest extends EditorSuggest<VerseSuggestion> {
 
     if (this.parallel) {
       const [primary, secondary] = this.plugin.settings.parallelVersions;
+      // 등록 역본이 1개뿐이면 병렬 쌍이 같은 값 — 단일 삽입으로 강등
+      if (primary === secondary) return [{ version: primary, label: `${label} (${primary})` }];
       return [{ version: primary, secondary, label: `${label} (${primary} · ${secondary})` }];
     }
 
     const def = this.plugin.settings.defaultVersion;
-    const ordered = [def, ...VERSIONS.filter((v) => v !== def)];
+    const names = versionNames(this.plugin.settings.versions);
+    const ordered = [def, ...names.filter((v) => v !== def)];
     return ordered.map((version) => ({ version, label: `${label} (${version})` }));
   }
 

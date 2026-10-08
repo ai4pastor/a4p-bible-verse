@@ -5,7 +5,7 @@ import { SETTINGS_VERSION, migrateSettings } from "./settings-migrate";
 import { VerseInsertModal } from "./modal";
 import { BibleVerseSuggest } from "./suggest";
 import { VerseIndex } from "./verse-index";
-import { VersionFixes, sanitizeVersionSettings } from "./versions";
+import { VersionFixes, sanitizeVersionSettings, versionNames } from "./versions";
 import {
   BibleVerseSettings,
   BibleVerseSettingTab,
@@ -33,6 +33,7 @@ export default class BibleVersePlugin extends Plugin {
       ntPath: this.settings.ntPath,
       commentaryPath: this.settings.commentaryPath,
       sermonFolder: this.settings.sermonFolder,
+      versionNames: versionNames(this.settings.versions),
     }));
     this.verseIndex = new VerseIndex(
       this.app,

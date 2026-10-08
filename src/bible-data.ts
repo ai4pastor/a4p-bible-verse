@@ -1,6 +1,6 @@
 import { App, TFile, TFolder } from "obsidian";
 import { BOOK_BY_ABBREV, BOOKS, BookInfo, bookByFolderName } from "./books";
-import { extractVerseTexts, stripAnnotations } from "./note-parser";
+import { extractVerseTexts, listQuoteTitles, stripAnnotations } from "./note-parser";
 import {
   bookFolderMissingReason,
   buildCommentaryIndex,
@@ -20,12 +20,30 @@ import {
   nfc,
 } from "./verse-files";
 
-/** BibleData가 참조하는 폴더 경로 설정 묶음 (전부 볼트 루트 기준) */
-export interface PathSettings {
+/** BibleData가 참조하는 설정 묶음 — 폴더 경로(전부 볼트 루트 기준) + 등록 역본 이름 */
+export interface BibleDataSettings {
   otPath: string;
   ntPath: string;
   commentaryPath: string;
   sermonFolder: string;
+  /** 설정의 등록 역본 이름 — 검증·표본 확인에서 노트 콜아웃 제목과 대조 */
+  versionNames: string[];
+}
+
+/** 표본 노트 — 구약 2곳·신약 1곳. 검증·"노트에서 찾기"가 이 노트들의 콜아웃만 읽는다 */
+const SAMPLE_NOTES: ReadonlyArray<{ abbrev: string; chapter: number; verse: number }> = [
+  { abbrev: "창", chapter: 1, verse: 1 },
+  { abbrev: "시", chapter: 23, verse: 1 },
+  { abbrev: "요", chapter: 3, verse: 16 },
+];
+
+/** detectQuoteTitles 결과 — 표본 노트에서 모은 `[!quote]` 제목과 발견 노트 수 */
+export interface QuoteTitleScan {
+  titles: Array<{ title: string; found: number }>;
+  /** 실제로 읽은 표본 노트 수 (신약만 등록한 볼트는 1) */
+  total: number;
+  /** 표본을 하나도 못 읽은 이유 (폴더 미설정 등) */
+  reason?: string;
 }
 
 export interface LoadResult {
@@ -64,7 +82,7 @@ export class BibleData {
 
   constructor(
     private app: App,
-    private getPaths: () => PathSettings,
+    private getPaths: () => BibleDataSettings,
   ) {}
 
   private otPath(): string {
@@ -322,13 +340,30 @@ export class BibleData {
     const sampleName = `${sampleRef.abbrev}${sampleRef.chapter}_${sampleRef.verseStart}`;
     const sample = await this.loadVerses(sampleRef);
     if (sample.ok && sample.result.verses[0]) {
-      const versions = Object.keys(sample.result.verses[0].texts).length;
-      if (versions > 0) {
-        messages.push(`✅ 샘플 구절(${sampleName}) 읽기 성공 — 역본 ${versions}개 확인`);
+      // 등록 역본 목록과 대조 — "ESV를 등록했는데 안 보인다" 류를 여기서 바로 판별
+      const texts = sample.result.verses[0].texts;
+      const registered = this.getPaths().versionNames;
+      const found = registered.filter((n) => texts[n]);
+      const missing = registered.filter((n) => !texts[n]);
+      const unregistered = Object.keys(texts).filter((t) => !registered.includes(t));
+      if (found.length === registered.length) {
+        messages.push(
+          `✅ 샘플 구절(${sampleName}) 읽기 성공 — 등록 역본 ${registered.length}개 모두 발견`,
+        );
+      } else if (found.length > 0) {
+        ok = false;
+        messages.push(
+          `⚠️ 샘플 구절(${sampleName}) 읽기 성공 — 등록 역본 ${registered.length}개 중 ${found.length}개 발견 · 없음: ${missing.join(", ")} (노트에 '> [!quote] ${missing[0]}' 콜아웃이 없습니다. 설정 '역본'에서 빼거나 노트에 콜아웃을 넣어주세요)`,
+        );
       } else {
         ok = false;
         messages.push(
-          `⚠️ ${sampleName}.md를 읽었지만 역본 콜아웃을 찾지 못했습니다 (노트 형식 확인 필요)`,
+          `⚠️ ${sampleName}.md를 읽었지만 등록된 역본(${registered.join(", ")}) 콜아웃을 찾지 못했습니다 (노트 형식·역본 이름 확인 필요)`,
+        );
+      }
+      if (unregistered.length > 0) {
+        messages.push(
+          `ℹ️ 노트에 있지만 등록하지 않은 역본: ${unregistered.join(", ")} — 설정 '역본'의 '노트에서 찾기'로 추가할 수 있습니다.`,
         );
       }
     } else {
@@ -352,6 +387,40 @@ export class BibleData {
     }
 
     return { ok, messages };
+  }
+
+  /**
+   * 설정 탭 "노트에서 찾기"·역본 추가 모달의 표본 확인용 — 표본 노트 3곳의 `[!quote]` 제목을
+   * 모은다. 등록 여부는 가리지 않는다(호출자가 거른다). 버튼을 눌렀을 때만 실행되며 부팅 경로에는 없다.
+   */
+  async detectQuoteTitles(): Promise<QuoteTitleScan> {
+    const folderError = this.ensureFolderCache();
+    if (folderError) return { titles: [], total: 0, reason: folderError };
+    const counts = new Map<string, number>();
+    let total = 0;
+    for (const { abbrev, chapter, verse } of SAMPLE_NOTES) {
+      const file = this.ensureBookFiles(abbrev)?.byLink.get(`${abbrev}${chapter}_${verse}`);
+      if (!file) continue;
+      let content: string;
+      try {
+        content = await this.app.vault.cachedRead(file);
+      } catch {
+        continue;
+      }
+      total += 1;
+      for (const title of listQuoteTitles(content)) {
+        counts.set(title, (counts.get(title) ?? 0) + 1);
+      }
+    }
+    if (total === 0) {
+      return {
+        titles: [],
+        total,
+        reason:
+          "표본 노트(창1_1·시23_1·요3_16)를 찾지 못했습니다 — 위의 성경 폴더 '검증'을 먼저 해주세요.",
+      };
+    }
+    return { titles: [...counts].map(([title, found]) => ({ title, found })), total };
   }
 
   /** 참조가 가리키는 절들의 본문을 로드한다 (범위 클램프·장 경계 범위 포함). */
