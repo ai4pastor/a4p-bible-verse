@@ -1,4 +1,4 @@
-import { App, Component, Editor, MarkdownRenderer, Modal, Notice, TFile } from "obsidian";
+import { App, Component, Editor, MarkdownRenderer, Modal, Notice, TFile, TFolder } from "obsidian";
 import { BibleData, LoadResult } from "./bible-data";
 import { formatPlainVerses, formatVerses, groupForInsert } from "./formatter";
 import type BibleVersePlugin from "./main";
@@ -10,8 +10,24 @@ import { BibleReference, IndexEntry, Version, VerseData } from "./types";
 import { shortLabel, versionNames } from "./versions";
 import { BUILD_CANCELLED } from "./verse-index";
 import { ConfirmBuildModal } from "./confirm-build-modal";
+import { normalizeFolderPath } from "./paths";
+import {
+  SermonMeta,
+  compareSermons,
+  dateFromProperty,
+  formatSermonDate,
+  groupLabel,
+  isYearFolder,
+  labelColor,
+  parseSermonName,
+  sermonGroup,
+} from "./sermon-meta";
 
 const DEBOUNCE_MS = 150;
+/** 인용한 설교: 이보다 많을 때만 앞부분만 보이고 나머지는 [더보기]로 펼친다 */
+const CITING_INITIAL = 10;
+/** 부서 배지 색 수 (styles.css의 .is-c0~7) */
+const GROUP_COLORS = 8;
 
 /** 세션 내 마지막 사용 역본 (Obsidian 재시작 시 설정 기본값으로 리셋) */
 let sessionVersion: Version | null = null;
@@ -48,6 +64,8 @@ export class VerseInsertModal extends Modal {
   private previewEl!: HTMLElement;
   private insertBtnEl!: HTMLButtonElement;
   private citing: string[] = [];
+  /** 인용한 설교 [더보기] 펼침 — 새 검색·절 이동으로 다시 그려도 모달이 열려 있는 동안 유지 */
+  private citingExpanded = false;
   /** 미리보기 렌더링 생명주기 관리 (모달 닫힐 때 unload) */
   private previewComponent = new Component();
   private previewOpen = false;
@@ -662,6 +680,7 @@ export class VerseInsertModal extends Modal {
     if (!fromNav) this.pushNav();
     this.currentPreview = opts;
     this.citeCurrent = null;
+    this.syncCitingActive();
     const { file, title, heading, searchInput, highlightPaths } = opts;
     this.previewEl.empty();
     this.previewEl.addClass("is-open");
@@ -746,6 +765,7 @@ export class VerseInsertModal extends Modal {
     this.previewOpen = false;
     this.currentPreview = null;
     this.citeCurrent = null;
+    this.syncCitingActive();
   }
 
   /** 렌더된 링크·임베드 요소가 가리키는 노트 경로 — 미해석 링크는 null */
@@ -981,34 +1001,142 @@ export class VerseInsertModal extends Modal {
       });
     }
 
-    if (this.citing.length > 0) {
-      const row = this.contextEl.createDiv({ cls: "bible-verse-context-row" });
-      row.createSpan({ cls: "bible-verse-context-label", text: "인용한 설교" });
-      const shown = this.citing.slice(0, 5);
-      for (const path of shown) {
-        const btn = row.createEl("button", { cls: "bible-verse-chip is-note" });
-        btn.setText(path.split("/").pop()?.replace(/\.md$/, "") ?? path);
-        btn.title = path;
-        btn.tabIndex = -1;
-        this.registerHover(btn, path);
-        btn.addEventListener("click", () => {
-          const file = this.app.vault.getAbstractFileByPath(path);
+    this.renderCitingRow(verse);
+  }
+
+  /**
+   * 인용한 설교 — 최신순 목록(날짜 · 부서 · 제목 · 본문 열 맞춤). 찾은 노트는 전부 닿을 수 있어야 한다
+   * ("외 N개"로 숨기지 않음). CITING_INITIAL보다 많을 때만 앞부분 뒤에 [더보기], 펼치면 [접기].
+   * 날짜·본문은 파일명에서(sermon-meta), 부서는 설교 폴더 바로 아래 폴더. 버튼은 이 목록만 다시 그린다.
+   */
+  private renderCitingRow(verse: VerseData) {
+    if (this.citing.length === 0) return;
+    const root = normalizeFolderPath(this.plugin.settings.sermonFolder);
+    const colors = this.groupColors(root);
+    // 부서: 설교 폴더 아래 분류 폴더 → 파일명 날짜 뒤 부서 표시 → 없으면 빈칸
+    const items = this.citing
+      .map((path) => {
+        const meta = this.sermonMeta(path);
+        return { path, meta, group: sermonGroup(path, root) ?? meta.dept };
+      })
+      .sort(compareSermons);
+    const hasGroups = items.some((it) => it.group);
+    const counts = new Map<string, number>();
+    for (const it of items) if (it.group) counts.set(it.group, (counts.get(it.group) ?? 0) + 1);
+
+    const section = this.contextEl.createDiv({ cls: "bible-verse-citing" });
+    const fill = () => {
+      section.empty();
+      const collapsible = items.length > CITING_INITIAL;
+      const expanded = collapsible && this.citingExpanded;
+      section.toggleClass("is-expanded", expanded);
+
+      const head = section.createDiv({ cls: "bible-verse-citing-head" });
+      head.createSpan({ cls: "bible-verse-context-label", text: `인용한 설교 ${items.length}편` });
+      // 부서가 둘 이상이면 부서별 편수 (목록 배지와 같은 색)
+      if (counts.size >= 2) {
+        for (const [group, n] of Array.from(counts).sort((a, b) => b[1] - a[1])) {
+          this.groupBadge(head, group, colors, `${group} ${n}`);
+        }
+      }
+
+      const list = section.createDiv({
+        cls: `bible-verse-citing-list${hasGroups ? "" : " is-flat"}`,
+      });
+      for (const it of collapsible && !expanded ? items.slice(0, CITING_INITIAL) : items) {
+        const row = list.createDiv({ cls: "bible-verse-citing-item" });
+        row.dataset.path = it.path;
+        row.title = it.path;
+        row.createSpan({
+          cls: "bible-verse-citing-date",
+          text: it.meta.date ? formatSermonDate(it.meta.date) : "—",
+        });
+        if (hasGroups) {
+          if (it.group) this.groupBadge(row, it.group, colors);
+          else row.createSpan(); // 부서 열 자리
+        }
+        const title = row.createSpan({ cls: "bible-verse-citing-title" });
+        title.createSpan({ cls: "bible-verse-citing-title-text", text: it.meta.title });
+        if (it.meta.tag) title.createSpan({ cls: "bible-verse-citing-tag", text: it.meta.tag });
+        row.createSpan({ cls: "bible-verse-citing-passage", text: it.meta.passage ?? "" });
+        this.registerHover(row, it.path);
+        row.addEventListener("click", () => {
+          const file = this.app.vault.getAbstractFileByPath(it.path);
           if (!(file instanceof TFile)) return;
           // 검색 중인 절의 노트 경로(참조 모드 = 범위 전체, 키워드 모드 = 선택한 1절).
-          // citingNotes 판정과 같은 집합이라, 칩이 떴으면 이 중 하나로 가는 링크가 있다.
+          // citingNotes 판정과 같은 집합이라, 목록에 떴으면 이 중 하나로 가는 링크가 있다.
           const highlightPaths = (this.loaded?.verses ?? [verse])
             .map((v) => v.path)
             .filter((p): p is string => !!p);
           void this.openPreview({ file, title: file.basename, highlightPaths });
         });
       }
-      if (this.citing.length > shown.length) {
-        row.createSpan({
-          cls: "bible-verse-context-more",
-          text: `외 ${this.citing.length - shown.length}개`,
+      this.syncCitingActive();
+
+      if (collapsible) {
+        const toggle = section.createEl("button", {
+          cls: "bible-verse-chip is-toggle",
+          text: expanded ? "접기" : "더보기",
+        });
+        toggle.tabIndex = -1;
+        toggle.addEventListener("click", () => {
+          this.citingExpanded = !this.citingExpanded;
+          fill();
         });
       }
+    };
+    fill();
+  }
+
+  /** 파일명에서 날짜·제목·본문을 읽고, 날짜가 없으면 노트 속성(date·설교일)으로 보충 */
+  private sermonMeta(path: string): SermonMeta {
+    const basename = path.split("/").pop()?.replace(/\.md$/, "") ?? path;
+    // 수강생마다 이름 규칙이 달라도 목록은 떠야 한다 — 뜻밖의 실패는 이름만 보여 주는 행으로
+    try {
+      const meta = parseSermonName(basename);
+      if (!meta.date) {
+        const fm = this.app.metadataCache.getCache(path)?.frontmatter;
+        meta.date = dateFromProperty(fm?.["date"]) ?? dateFromProperty(fm?.["설교일"]);
+      }
+      return meta;
+    } catch (e) {
+      console.error("[a4p-bible-verse] 설교 이름 판독 실패:", path, e);
+      return { title: basename };
     }
+  }
+
+  /**
+   * 폴더 부서 → 색 번호: 설교 폴더 아래 분류 폴더(연도 폴더 안의 분류 포함)의 이름순 자리라
+   * 검색마다 바뀌지 않는다. 설교 폴더를 지정하지 않았으면 빈 지도(파일명 부서는 labelColor로).
+   */
+  private groupColors(root: string): Map<string, number> {
+    const colors = new Map<string, number>();
+    const base = root ? this.app.vault.getAbstractFileByPath(root) : null;
+    if (!(base instanceof TFolder)) return colors;
+    const names: string[] = [];
+    for (const child of base.children) {
+      if (!(child instanceof TFolder)) continue;
+      if (!isYearFolder(child.name)) names.push(child.name);
+      else for (const sub of child.children) if (sub instanceof TFolder) names.push(sub.name);
+    }
+    for (const name of names.sort()) {
+      const label = groupLabel(name);
+      if (!colors.has(label)) colors.set(label, colors.size % GROUP_COLORS);
+    }
+    return colors;
+  }
+
+  private groupBadge(parent: HTMLElement, group: string, colors: Map<string, number>, text = group) {
+    const color = colors.get(group) ?? labelColor(group, GROUP_COLORS);
+    parent.createSpan({ cls: `bible-verse-citing-group is-c${color}`, text });
+  }
+
+  /** 미리보기 중인 설교 행 표시 — 미리보기가 바뀌거나 닫히면 따라간다 */
+  private syncCitingActive() {
+    const open = this.currentPreview?.file.path;
+    this.contextEl
+      .querySelectorAll<HTMLElement>(".bible-verse-citing-item")
+      .forEach((row) => row.toggleClass("is-active", row.dataset.path === open));
   }
 
   private updateInsertButton() {

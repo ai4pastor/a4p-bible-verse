@@ -14,6 +14,20 @@
   max-width: 1150px;
 }
 
+/* 모달이 최대 높이에 닿으면 절 목록(이미 스크롤 영역)이 줄어들어 자리를 내준다 — 장 전체 검색에서
+   인용한 설교 칩 줄이 길어져도 아래 버튼 줄(삽입·복사)이 밀려나 가려지지 않게.
+   .bible-verse-body는 이미 min-height: 0이라 내용 영역만 세로 flex로 바꾸면 된다 */
+.bible-verse-modal .modal-content {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* 줄어드는 건 본문뿐 — 검색창·상태줄·버튼 줄은 제 높이 유지 */
+.bible-verse-modal .modal-content > :not(.bible-verse-body) {
+  flex-shrink: 0;
+}
+
 .bible-verse-input-wrap {
   display: flex;
   align-items: stretch;
@@ -357,9 +371,140 @@
   color: var(--text-accent);
 }
 
-.bible-verse-context-more {
+/* 인용한 설교 [더보기]/[접기] — 설교 칩(is-note)과 구별되는 점선 칩 (테두리 1px만큼 패딩을 줄여 높이 동일) */
+.bible-verse-chip.is-toggle {
+  background: transparent;
+  color: var(--text-normal);
+  border: 1px dashed var(--background-modifier-border);
+  padding: 0 7px;
+}
+
+/* 인용한 설교 — 최신순 목록. 날짜 · 부서 · 제목 · 본문 열을 subgrid로 행끼리 맞춘다 */
+.bible-verse-citing {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: var(--size-4-1) var(--size-4-2);
+}
+
+.bible-verse-citing-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.bible-verse-citing-list {
+  display: grid;
+  grid-template-columns: max-content max-content minmax(0, 1fr) max-content;
+  column-gap: var(--size-4-3);
+}
+
+/* 부서(설교 폴더 하위 폴더)가 없는 볼트 — 부서 열 없이 */
+.bible-verse-citing-list.is-flat {
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
+}
+
+/* 펼치면 수십 편이어도 모달이 화면 밖으로 늘어나지 않게 목록 안에서 스크롤 */
+.bible-verse-citing.is-expanded .bible-verse-citing-list {
+  max-height: 30vh;
+  overflow-y: auto;
+}
+
+.bible-verse-citing-item {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: var(--radius-s);
   font-size: var(--font-ui-smaller);
+  cursor: pointer;
+}
+
+/* 오래된 설치본(Chromium 117 미만)은 subgrid가 없다 — 고정 폭 열로 정렬을 유지 */
+@supports not (grid-template-columns: subgrid) {
+  .bible-verse-citing-item {
+    grid-template-columns: 6.5em 6em minmax(0, 1fr) auto;
+    column-gap: var(--size-4-3);
+  }
+
+  .bible-verse-citing-list.is-flat .bible-verse-citing-item {
+    grid-template-columns: 6.5em minmax(0, 1fr) auto;
+  }
+}
+
+.bible-verse-citing-item:hover {
+  background: var(--background-modifier-hover);
+}
+
+/* 지금 미리보기 중인 설교 */
+.bible-verse-citing-item.is-active {
+  background: var(--background-modifier-hover);
+  box-shadow: inset 2px 0 0 0 var(--interactive-accent);
+}
+
+.bible-verse-citing-date {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.bible-verse-citing-title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.bible-verse-citing-title-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-normal);
+}
+
+/* 같은 설교의 다른 판 꼬리표 (hm · 작업초안 …) */
+.bible-verse-citing-tag {
+  flex-shrink: 0;
   color: var(--text-faint);
+}
+
+.bible-verse-citing-passage {
+  max-width: 12em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  color: var(--text-accent);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 부서 배지 — 색(is-c0~7)은 설교 폴더 안 폴더 순서, 파일명 부서는 이름으로 고정.
+   테마에 색 변수가 없으면 회색으로 (var 대체값) */
+.bible-verse-citing-group {
+  justify-self: start;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 6px;
+  border-radius: var(--radius-s);
+  background: rgba(var(--bv-group-rgb, 128, 128, 128), 0.15);
+  color: rgb(var(--bv-group-rgb, 128, 128, 128));
+  font-size: var(--font-ui-smaller);
+  white-space: nowrap;
+}
+
+.bible-verse-citing-group.is-c0 { --bv-group-rgb: var(--color-blue-rgb); }
+.bible-verse-citing-group.is-c1 { --bv-group-rgb: var(--color-green-rgb); }
+.bible-verse-citing-group.is-c2 { --bv-group-rgb: var(--color-purple-rgb); }
+.bible-verse-citing-group.is-c3 { --bv-group-rgb: var(--color-orange-rgb); }
+.bible-verse-citing-group.is-c4 { --bv-group-rgb: var(--color-cyan-rgb); }
+.bible-verse-citing-group.is-c5 { --bv-group-rgb: var(--color-pink-rgb); }
+.bible-verse-citing-group.is-c6 { --bv-group-rgb: var(--color-yellow-rgb); }
+.bible-verse-citing-group.is-c7 { --bv-group-rgb: var(--color-red-rgb); }
+
+.bible-verse-citing > .bible-verse-chip.is-toggle {
+  align-self: flex-start;
 }
 
 .bible-verse-btn-group {
