@@ -42,6 +42,8 @@ export interface SearchOutcome {
   hits: SearchHit[];
   /** 완전 일치(exact) 절 수 */
   exactTotal: number;
+  /** 유사(partial) 절 수 — 상한(partialLimit)으로 자르기 전. hits 안의 유사 결과보다 크면 잘린 것 */
+  partialTotal: number;
 }
 
 /**
@@ -144,7 +146,7 @@ export function searchVerses(
   const tokens = tokenize(query);
   const partialLimit = opts.partialLimit ?? DEFAULT_PARTIAL_LIMIT;
   if (tokens.length === 0 || opts.versions.length === 0) {
-    return { hits: [], exactTotal: 0 };
+    return { hits: [], exactTotal: 0, partialTotal: 0 };
   }
   const hasAscii = tokens.some((t) => /[a-z]/.test(t));
 
@@ -194,7 +196,7 @@ export function searchVerses(
   if (hits.length === 0) {
     hits = fuzzySearch(entries, tokens, opts.versions, hasAscii);
   }
-  return { hits, exactTotal };
+  return { hits, exactTotal, partialTotal: partial.length };
 }
 
 /** exact·partial 0건일 때만 도는 오타 보정 폴백 — 질의 bigram 포함률 기준 */

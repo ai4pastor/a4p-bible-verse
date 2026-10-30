@@ -379,6 +379,107 @@
   padding: 0 7px;
 }
 
+/* 단어 검색 결과 필터 — 범위(구약·신약) › 권 › 장. 이미 찾은 결과를 좁혀 볼 뿐 다시 검색하지 않는다 */
+.bible-verse-filter {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 var(--size-4-2) var(--size-4-2);
+}
+
+.bible-verse-filter:empty {
+  display: none;
+}
+
+/* 라벨 + 칩 자리 — 칩이 여러 줄로 감겨도 라벨 오른쪽 열에 맞춰진다 */
+.bible-verse-filter-row {
+  display: flex;
+  align-items: baseline;
+}
+
+.bible-verse-filter-label {
+  width: 2.4em;
+}
+
+.bible-verse-filter-chips {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.bible-verse-filter-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.bible-verse-filter-count {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+}
+
+.bible-verse-filter-chip.is-active,
+.bible-verse-filter-chip.is-active:hover {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.bible-verse-filter-chip:disabled,
+.bible-verse-filter-chip:disabled:hover {
+  opacity: 0.45;
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  cursor: default;
+}
+
+/* 「모든 단어만」은 범위와 다른 축 — 범위 칩과 조금 띄운다 */
+.bible-verse-filter-exact {
+  margin-left: var(--size-4-2);
+}
+
+/* (선택 N) — 첫 줄 오른쪽 끝 */
+.bible-verse-filter-picked {
+  margin-left: auto;
+}
+
+/* 고른 절 모아 보기 중 — 범위·권·장 필터가 잠시 빠져 있다는 표시 */
+.bible-verse-filter.is-picking .bible-verse-filter-chip:not(.bible-verse-filter-picked) {
+  opacity: 0.55;
+}
+
+/* 유사 결과 시작 — 위는 모든 단어가 든 절(정경 순), 아래는 일부 단어만 든 절(관련성 순) */
+.bible-verse-tier-divider {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+  padding: var(--size-4-2) var(--size-4-2) var(--size-4-1);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.bible-verse-tier-divider::before,
+.bible-verse-tier-divider::after {
+  content: "";
+  flex: 1;
+  border-top: 1px dashed var(--background-modifier-border);
+}
+
+/* 필터를 거친 결과가 0줄 */
+.bible-verse-filter-empty {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+  padding: var(--size-4-3) var(--size-4-2);
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+}
+
 /* 인용한 설교 — 최신순 목록. 날짜 · 부서 · 제목 · 본문 열을 subgrid로 행끼리 맞춘다 */
 .bible-verse-citing {
   display: flex;

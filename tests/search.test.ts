@@ -96,12 +96,14 @@ describe("Tier 1 — exact (전 토큰 AND)", () => {
     expect(exactTotal).toBe(3);
   });
   it("partialLimit은 유사 결과만 자르고 exact는 유지", () => {
-    const { hits } = searchVerses(ENTRIES, "하나님 사랑", {
+    const { hits, partialTotal } = searchVerses(ENTRIES, "하나님 사랑", {
       ...OPTS,
       partialLimit: 0,
     });
     expect(hits.filter((h) => h.tier === "exact").length).toBe(2);
     expect(hits.filter((h) => h.tier === "partial").length).toBe(0);
+    // 잘리기 전 유사 절 수는 남는다 (창1_1 — "하나님"만) → 모달이 "상위 N절" 표기를 판단
+    expect(partialTotal).toBe(1);
   });
   it("matchedRanges가 실제 매칭 위치를 가리킴", () => {
     const { hits } = searchVerses(ENTRIES, "사랑", OPTS);

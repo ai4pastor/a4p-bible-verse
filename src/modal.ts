@@ -12,6 +12,17 @@ import { BUILD_CANCELLED } from "./verse-index";
 import { ConfirmBuildModal } from "./confirm-build-modal";
 import { normalizeFolderPath } from "./paths";
 import {
+  NO_FILTER,
+  ResultFilter,
+  applyFilter,
+  collapseChips,
+  facetCounts,
+  isFiltered,
+  selectBook,
+  selectChapter,
+  selectTestament,
+} from "./result-filter";
+import {
   SermonMeta,
   compareSermons,
   dateFromProperty,
@@ -28,6 +39,9 @@ const DEBOUNCE_MS = 150;
 const CITING_INITIAL = 10;
 /** 부서 배지 색 수 (styles.css의 .is-c0~7) */
 const GROUP_COLORS = 8;
+/** 키워드 결과 필터: 권·장 칩이 이보다 많을 때만 결과가 많은 칩만 남기고 나머지는 [더보기]로 펼친다 */
+const BOOK_CHIPS_INITIAL = 20;
+const CHAPTER_CHIPS_INITIAL = 24;
 
 /** 세션 내 마지막 사용 역본 (Obsidian 재시작 시 설정 기본값으로 리셋) */
 let sessionVersion: Version | null = null;
@@ -43,10 +57,10 @@ interface PreviewOpts {
   highlightPaths?: string[];
 }
 
-/** 모달 내 뒤로가기 히스토리의 한 화면 — 미리보기 또는 검색 목록 */
+/** 모달 내 뒤로가기 히스토리의 한 화면 — 미리보기 또는 검색 목록 (단어 검색이면 보던 필터도) */
 type NavState =
   | { kind: "preview"; opts: PreviewOpts }
-  | { kind: "search"; query: string };
+  | { kind: "search"; query: string; filter?: ResultFilter };
 
 export class VerseInsertModal extends Modal {
   private plugin: BibleVersePlugin;
@@ -87,6 +101,19 @@ export class VerseInsertModal extends Modal {
   /** 키워드 목록의 행/체크박스 참조 — 수백 행 재렌더링 없이 증분 갱신용 */
   private keywordRows: HTMLElement[] = [];
   private keywordChecks = new Map<string, HTMLInputElement>();
+  /** 키워드 결과 필터 막대 (범위·권·장) — 목록 바로 위 */
+  private filterEl!: HTMLElement;
+  private filter: ResultFilter = NO_FILTER;
+  /** 필터를 거친 키워드 결과 — 목록·하이라이트·Space·Cmd+A·Cmd+Enter가 보는 범위. 선택·삽입은 keywordHits 전체 */
+  private keywordView: SearchHit[] = [];
+  /** 자르기 전 유사 결과 수 — 구분선의 "관련성 상위 N절" 표기 판단 */
+  private keywordPartialTotal = 0;
+  /** (선택 N) 칩 — 필터는 그대로 둔 채 고른 절만 모아 본다 */
+  private selectedOnly = false;
+  /** 다음 단어 검색에 이어 쓸 필터 — 역본 전환(같은 검색어 재검색)·뒤로가기 복귀 때만 채운다 */
+  private restoreFilter: { query: string; filter: ResultFilter } | null = null;
+  /** [더보기]로 펼친 칩 줄(권·장) — 모달이 열려 있는 동안 유지 */
+  private expandedChips = new Set<"권" | "장">();
   /** 청크 렌더링 세대 — 새 렌더 시작 시 이전 예약 청크 폐기 */
   private renderToken = 0;
   private selected = new Set<string>(); // linkTarget 기준 (장 경계 범위에서 절 번호 중복 방지)
@@ -134,6 +161,9 @@ export class VerseInsertModal extends Modal {
     // 본문 영역: 좌측(목록+컨텍스트) / 우측(미리보기 패널)
     const bodyEl = contentEl.createDiv({ cls: "bible-verse-body" });
     const mainEl = bodyEl.createDiv({ cls: "bible-verse-main" });
+
+    // 단어 검색 결과 필터 (범위·권·장) — 미리보기가 열려도 목록과 같은 폭
+    this.filterEl = mainEl.createDiv({ cls: "bible-verse-filter" });
 
     // 구절 목록
     this.listEl = mainEl.createDiv({ cls: "bible-verse-list" });
@@ -258,7 +288,11 @@ export class VerseInsertModal extends Modal {
     if (this.currentPreview) {
       this.navStack.push({ kind: "preview", opts: this.currentPreview });
     } else {
-      this.navStack.push({ kind: "search", query: this.inputEl.value });
+      this.navStack.push({
+        kind: "search",
+        query: this.inputEl.value,
+        filter: this.keywordHits && isFiltered(this.filter) ? this.filter : undefined,
+      });
     }
     if (this.navStack.length > 50) this.navStack.shift();
     this.updateBackButton();
@@ -279,6 +313,7 @@ export class VerseInsertModal extends Modal {
     }
     this.closePreview();
     this.inputEl.value = state.query;
+    if (state.filter) this.restoreFilter = { query: state.query.trim(), filter: state.filter };
     void this.runSearch();
     this.inputEl.focus();
   }
@@ -300,6 +335,9 @@ export class VerseInsertModal extends Modal {
   private async runSearch() {
     const query = this.inputEl.value.trim();
     const id = ++this.requestId;
+    // 역본 전환·뒤로가기가 남긴 필터는 이번 검색 한 번에만 쓴다
+    const restore = this.restoreFilter;
+    this.restoreFilter = null;
     if (this.previewOpen) {
       this.pushNav(); // 미리보기 중 새 검색 — 뒤로가기로 미리보기 복귀 가능하게
       this.closePreview();
@@ -317,7 +355,7 @@ export class VerseInsertModal extends Modal {
     if (!parsed.ok) {
       // 참조 형태가 아닌 입력(예: "사랑 은혜")은 본문 키워드 검색으로 폴백
       if (parsed.kind === "unrecognized" && query.length >= 2) {
-        await this.runKeywordSearch(query, id);
+        await this.runKeywordSearch(query, id, restore);
         return;
       }
       this.ref = null;
@@ -325,8 +363,7 @@ export class VerseInsertModal extends Modal {
       this.keywordHits = null;
       this.renderVersionBar();
       this.setStatus(parsed.reason, "error");
-      this.listEl.empty();
-      this.contextEl.empty();
+      this.clearResults();
       this.updateInsertButton();
       return;
     }
@@ -348,8 +385,7 @@ export class VerseInsertModal extends Modal {
       this.keywordHits = null;
       this.renderVersionBar();
       this.setStatus(outcome.reason, "error");
-      this.listEl.empty();
-      this.contextEl.empty();
+      this.clearResults();
       this.updateInsertButton();
       return;
     }
@@ -382,8 +418,15 @@ export class VerseInsertModal extends Modal {
     this.setStatus(`${label} (${verses.length}절)${noticeText}`, notice ? "warn" : "ok");
   }
 
-  /** 본문 키워드 검색 — 첫 실행 시 인덱스를 빌드(진행률 표시)한 뒤 선형 스캔 */
-  private async runKeywordSearch(query: string, id: number) {
+  /**
+   * 본문 키워드 검색 — 첫 실행 시 인덱스를 빌드(진행률 표시)한 뒤 선형 스캔.
+   * restore: 역본 전환·뒤로가기로 같은 검색어를 다시 찾을 때 이어 쓸 필터 (새 검색어면 무시)
+   */
+  private async runKeywordSearch(
+    query: string,
+    id: number,
+    restore: { query: string; filter: ResultFilter } | null,
+  ) {
     this.ref = null;
     this.loaded = null;
     this.renderVersionBar();
@@ -391,8 +434,7 @@ export class VerseInsertModal extends Modal {
     // 저사양 PC용 토글 — 꺼져 있으면 인덱스 빌드·캐시 로드 없이 안내만
     if (!this.plugin.settings.enableKeywordSearch) {
       this.keywordHits = null;
-      this.listEl.empty();
-      this.contextEl.empty();
+      this.clearResults();
       this.setStatus(
         "본문 키워드 검색이 꺼져 있습니다 — 장절 참조(예: 요3:16)로 검색하거나 설정 → A4P 성경구절에서 켜주세요.",
         "warn",
@@ -403,8 +445,7 @@ export class VerseInsertModal extends Modal {
 
     const index = this.plugin.verseIndex;
     if (index.status !== "ready") {
-      this.listEl.empty();
-      this.contextEl.empty();
+      this.clearResults();
       this.setStatus("본문 인덱스 준비 중… (처음 한 번만 걸립니다)", "muted");
       const err = await index.ensureBuilt(
         (done, total) => {
@@ -437,8 +478,11 @@ export class VerseInsertModal extends Modal {
 
     this.keywordHits = outcome.hits;
     this.keywordExactTotal = outcome.exactTotal;
+    this.keywordPartialTotal = outcome.partialTotal;
+    // 새 검색어는 필터 없이 시작 — 역본 전환·뒤로가기로 같은 검색어를 다시 찾을 때만 이어 쓴다
+    this.filter = restore && restore.query === query ? restore.filter : NO_FILTER;
+    this.selectedOnly = false;
     this.selected = new Set(); // 키워드 결과는 기본 선택 없음 (참조 모드와 반대)
-    this.highlight = -1;
     this.citing = [];
 
     const scopeLabel =
@@ -467,8 +511,7 @@ export class VerseInsertModal extends Modal {
         "ok",
       );
     }
-    this.renderList();
-    this.renderContext();
+    this.refreshKeywordView();
   }
 
   // ── 렌더링 ────────────────────────────────────────────
@@ -480,10 +523,16 @@ export class VerseInsertModal extends Modal {
         : "장절 참조를 입력하세요 (예: 요3:16, 시23편)",
       "muted",
     );
-    this.listEl.empty();
-    this.contextEl.empty();
+    this.clearResults();
     this.renderVersionBar();
     this.updateInsertButton();
+  }
+
+  /** 결과 영역(필터 막대·목록·컨텍스트)을 비운다 — 오류·빈 입력·인덱스 준비 중 */
+  private clearResults() {
+    this.filterEl.empty();
+    this.listEl.empty();
+    this.contextEl.empty();
   }
 
   private setStatus(text: string, kind: "ok" | "warn" | "error" | "muted") {
@@ -531,6 +580,7 @@ export class VerseInsertModal extends Modal {
   }
 
   private renderList() {
+    this.renderFilterBar(); // 참조 모드에서는 비운다
     if (this.keywordHits) {
       this.renderKeywordList();
       return;
@@ -579,7 +629,7 @@ export class VerseInsertModal extends Modal {
   }
 
   /**
-   * 키워드 검색 결과 목록 — "책 장:절" 라벨 + 매칭 하이라이트.
+   * 키워드 검색 결과 목록(필터를 거친 keywordView) — "책 장:절" 라벨 + 매칭 하이라이트.
    * 완전 일치는 잘리지 않으므로 수백~수천 행이 될 수 있어
    * 청크 단위로 렌더링하고, 선택·하이라이트는 재렌더링 없이 증분 갱신한다.
    */
@@ -587,18 +637,218 @@ export class VerseInsertModal extends Modal {
     this.listEl.empty();
     this.keywordRows = [];
     this.keywordChecks.clear();
-    const hits = this.keywordHits ?? [];
+    const hits = this.keywordView;
     const token = ++this.renderToken;
+    this.updateInsertButton();
+
+    if (hits.length === 0 && this.keywordHits && this.keywordHits.length > 0) {
+      this.renderFilterEmpty();
+      return;
+    }
 
     const CHUNK = 400;
     const renderChunk = (start: number) => {
       if (token !== this.renderToken) return; // 새 렌더가 시작됨 — 이 세대 폐기
       const end = Math.min(start + CHUNK, hits.length);
-      for (let i = start; i < end; i++) this.renderKeywordRow(hits[i], i);
+      for (let i = start; i < end; i++) {
+        // 완전 일치(정경 순)가 끝나고 유사(관련성 순)가 시작되는 자리 — keywordRows에는 넣지 않는다
+        if (hits[i].tier === "partial" && (i === 0 || hits[i - 1].tier !== "partial")) {
+          this.renderTierDivider();
+        }
+        this.renderKeywordRow(hits[i], i);
+      }
       if (end < hits.length) window.setTimeout(() => renderChunk(end), 0);
     };
     renderChunk(0);
-    this.updateInsertButton();
+  }
+
+  /** 유사 결과 구분선 — 필터는 이미 찾은 유사 결과(상한 안) 안에서 좁혀 본다는 점을 밝힌다 */
+  private renderTierDivider() {
+    const shown = (this.keywordHits ?? []).filter((h) => h.tier === "partial").length;
+    const capped = this.keywordPartialTotal > shown;
+    const divider = this.listEl.createDiv({
+      cls: "bible-verse-tier-divider",
+      text: `일부 단어만 들어 있는 절 · ${capped ? `관련성 상위 ${shown}절` : "관련성 순"}`,
+    });
+    divider.title = capped
+      ? `검색어의 일부 단어만 들어 있는 절 ${this.keywordPartialTotal.toLocaleString()}절 가운데 관련성이 높은 ${shown}절입니다. 범위·권·장 필터는 이 ${shown}절 안에서 좁혀 봅니다.`
+      : "검색어의 일부 단어만 들어 있는 절입니다 (관련성 높은 순).";
+  }
+
+  /** 필터를 거친 결과가 0줄 — 원인과 되돌리기 버튼 */
+  private renderFilterEmpty() {
+    const empty = this.listEl.createDiv({ cls: "bible-verse-filter-empty" });
+    empty.createSpan({
+      text: this.selectedOnly ? "고른 절이 없습니다." : "이 범위에는 결과가 없습니다.",
+    });
+    const btn = empty.createEl("button", {
+      cls: "bible-verse-chip is-toggle",
+      text: this.selectedOnly ? "목록으로" : "필터 해제",
+    });
+    btn.tabIndex = -1;
+    btn.addEventListener("click", () => {
+      if (this.selectedOnly) {
+        this.selectedOnly = false;
+        this.refreshKeywordView();
+      } else {
+        this.applyKeywordFilter(NO_FILTER);
+      }
+    });
+  }
+
+  // ── 단어 검색 결과 필터 (범위 › 권 › 장) ─────────────────
+
+  /** 필터·모아 보기 상태로 keywordView를 다시 계산하고 막대·목록·컨텍스트를 그린다 (다시 검색하지 않음) */
+  private refreshKeywordView() {
+    const hits = this.keywordHits ?? [];
+    this.keywordView = this.selectedOnly
+      ? hits.filter((h) => this.selected.has(h.entry.linkTarget))
+      : applyFilter(hits, this.filter);
+    this.highlight = -1;
+    this.renderList();
+    this.renderContext();
+    // 누른 칩은 다시 그려지며 사라진다 — 포커스를 입력창 존으로 돌려 ↓·타이핑이 바로 이어지게
+    this.inputEl.focus();
+  }
+
+  /** 칩 클릭 — 선택(체크)은 그대로 두고 보기만 바꾼다 */
+  private applyKeywordFilter(next: ResultFilter) {
+    if (!this.keywordHits) return;
+    this.filter = next;
+    this.selectedOnly = false;
+    this.refreshKeywordView();
+  }
+
+  /**
+   * 필터 막대 — 1줄 범위(전체·구약·신약) + 「모든 단어만」 + (선택 N), 2줄 권, 권을 고르면 3줄 장.
+   * 칩 숫자는 그 칩을 눌렀을 때 나오는 줄 수다(각 칩은 자기 차원만 빼고 나머지 필터를 반영해 센다).
+   * 결과가 1절 이하이고 걸린 필터도 없으면 그리지 않는다(참조 모드·0건 포함).
+   */
+  private renderFilterBar() {
+    this.filterEl.empty();
+    const hits = this.keywordHits;
+    if (!hits || (hits.length < 2 && !isFiltered(this.filter) && !this.selectedOnly)) return;
+    const f = this.filter;
+    const facets = facetCounts(hits, f);
+    // 모아 보기 중에는 필터가 잠시 빠져 있다는 표시로 흐리게 (누르면 모아 보기를 끝내고 그 필터로)
+    this.filterEl.toggleClass("is-picking", this.selectedOnly);
+
+    const top = this.filterRow("범위");
+    this.filterChip(top, "전체", facets.total, !f.testament, selectTestament(f, null));
+    for (const t of ["구약", "신약"] as const) {
+      this.filterChip(top, t, facets.testaments[t], f.testament === t, selectTestament(f, t));
+    }
+    if (facets.mixedTiers) {
+      const exactBtn = this.filterChip(top, "모든 단어만", facets.exact, f.exactOnly, {
+        ...f,
+        exactOnly: !f.exactOnly,
+      });
+      exactBtn.addClass("bible-verse-filter-exact");
+      exactBtn.title = "검색어의 모든 단어가 들어 있는 절만 보기 (일부 단어만 든 유사 결과 숨김)";
+    }
+    const picked = this.selectedKeywordEntries().length;
+    if (picked > 0 || this.selectedOnly) {
+      const btn = top.createEl("button", {
+        cls: `bible-verse-chip bible-verse-filter-chip bible-verse-filter-picked${
+          this.selectedOnly ? " is-active" : ""
+        }`,
+      });
+      btn.createSpan({ text: "선택" });
+      btn.createSpan({ cls: "bible-verse-filter-count", text: picked.toLocaleString() });
+      btn.title = this.selectedOnly
+        ? "모아 보기 끝내기 — 필터 화면으로"
+        : "고른 절만 모아 보기 — 다른 권·장에서 고른 절도 함께 삽입·복사됩니다";
+      btn.tabIndex = -1;
+      btn.addEventListener("click", () => {
+        this.selectedOnly = !this.selectedOnly;
+        this.refreshKeywordView();
+      });
+    }
+
+    const bookRow = this.filterRow("권");
+    if (!f.book) {
+      const books = this.expandedChips.has("권")
+        ? facets.books
+        : collapseChips(facets.books, BOOK_CHIPS_INITIAL);
+      for (const b of books) {
+        this.filterChip(bookRow, b.name, b.count, false, selectBook(f, b.abbrev));
+      }
+      this.moreChip(bookRow, "권", facets.books.length, BOOK_CHIPS_INITIAL);
+      return;
+    }
+
+    // 권을 고르면 권 줄은 「‹ 모든 권 + 고른 권」으로 줄고 장 줄이 생긴다
+    const allBooks = this.filterChip(bookRow, "‹ 모든 권", null, false, selectBook(f, null));
+    allBooks.title = "권 선택 풀기";
+    const current = facets.books.find((b) => b.abbrev === f.book);
+    const bookCount = current?.count ?? 0;
+    const bookBtn = this.filterChip(
+      bookRow,
+      current?.name ?? f.book,
+      bookCount,
+      true,
+      selectBook(f, f.book),
+    );
+    bookBtn.createSpan({ cls: "bible-verse-filter-x", text: "✕" });
+    bookBtn.title = "권 선택 풀기";
+
+    const chapterRow = this.filterRow("장");
+    this.filterChip(chapterRow, "전체", bookCount, f.chapter === null, selectChapter(f, null));
+    const chapters = this.expandedChips.has("장")
+      ? facets.chapters
+      : collapseChips(facets.chapters, CHAPTER_CHIPS_INITIAL, (c) => c.chapter === f.chapter);
+    for (const c of chapters) {
+      const active = f.chapter === c.chapter;
+      this.filterChip(chapterRow, `${c.chapter}장`, c.count, active, selectChapter(f, c.chapter));
+    }
+    this.moreChip(chapterRow, "장", facets.chapters.length, CHAPTER_CHIPS_INITIAL);
+  }
+
+  /** 필터 막대 한 줄 — 왼쪽 라벨 + 칩 자리(칩이 여러 줄로 감겨도 라벨 오른쪽에 맞춰진다) */
+  private filterRow(label: string): HTMLElement {
+    const row = this.filterEl.createDiv({ cls: "bible-verse-filter-row" });
+    row.createSpan({ cls: "bible-verse-context-label bible-verse-filter-label", text: label });
+    return row.createDiv({ cls: "bible-verse-filter-chips" });
+  }
+
+  /** 필터 칩 — 0건은 흐리게·못 누름(이미 고른 칩은 0이어도 눌러서 풀 수 있게). count가 null이면 숫자 없음 */
+  private filterChip(
+    parent: HTMLElement,
+    label: string,
+    count: number | null,
+    active: boolean,
+    next: ResultFilter,
+  ): HTMLButtonElement {
+    const btn = parent.createEl("button", { cls: "bible-verse-chip bible-verse-filter-chip" });
+    // 모아 보기 중에는 걸린 칩도 강조하지 않는다 — 지금 목록은 필터가 아니라 고른 절이므로
+    btn.toggleClass("is-active", active && !this.selectedOnly);
+    btn.createSpan({ text: label });
+    if (count !== null) {
+      btn.createSpan({ cls: "bible-verse-filter-count", text: count.toLocaleString() });
+    }
+    btn.tabIndex = -1;
+    if (count === 0 && !active) btn.disabled = true;
+    // 모아 보기 중에 이미 걸린 칩을 누르면 해제가 아니라 그 필터 화면으로 돌아간다
+    const target = this.selectedOnly && active ? this.filter : next;
+    btn.addEventListener("click", () => this.applyKeywordFilter(target));
+    return btn;
+  }
+
+  /** 칩이 한도보다 많을 때만 [더보기 (N권)]/[접기] — 숨긴 칩도 전부 닿을 수 있게 (「외 N개」 금지) */
+  private moreChip(parent: HTMLElement, unit: "권" | "장", total: number, limit: number) {
+    if (total <= limit) return;
+    const expanded = this.expandedChips.has(unit);
+    const btn = parent.createEl("button", {
+      cls: "bible-verse-chip is-toggle",
+      text: expanded ? "접기" : `더보기 (${total}${unit})`,
+    });
+    btn.tabIndex = -1;
+    btn.addEventListener("click", () => {
+      if (expanded) this.expandedChips.delete(unit);
+      else this.expandedChips.add(unit);
+      this.renderFilterBar(); // 목록은 그대로 — 막대만 다시 그린다
+      (this.highlight >= 0 ? this.listEl : this.inputEl).focus();
+    });
   }
 
   private renderKeywordRow(hit: SearchHit, idx: number) {
@@ -908,7 +1158,7 @@ export class VerseInsertModal extends Modal {
   private renderContext() {
     this.contextEl.empty();
     if (this.keywordHits) {
-      const hit = this.keywordHits[Math.max(this.highlight, 0)];
+      const hit = this.keywordView[Math.max(this.highlight, 0)];
       if (hit) void this.renderKeywordContext(hit);
       return;
     }
@@ -926,8 +1176,8 @@ export class VerseInsertModal extends Modal {
     const ref = parseLinkTarget(hit.entry.linkTarget);
     if (!ref) return;
     const outcome = await this.data.loadVerses(ref);
-    // 하이라이트가 이미 다른 절로 이동했으면 폐기
-    const current = this.keywordHits?.[Math.max(this.highlight, 0)];
+    // 하이라이트가 이미 다른 절로 이동했거나 필터·검색이 바뀌었으면 폐기
+    const current = this.keywordHits ? this.keywordView[Math.max(this.highlight, 0)] : undefined;
     if (current !== hit) return;
     if (!outcome.ok || !outcome.result.verses[0]) return;
     const verse = outcome.result.verses[0];
@@ -1146,9 +1396,16 @@ export class VerseInsertModal extends Modal {
       this.insertBtnEl.title = "편집 중인 노트가 없습니다 — 복사만 가능합니다";
       return;
     }
-    const count = this.insertableVerses().length;
+    const verses = this.insertableVerses();
+    const count = verses.length;
     this.insertBtnEl.setText(count > 0 ? `${count}절 삽입` : "삽입");
     this.insertBtnEl.disabled = count === 0;
+    // 필터로 가려진 줄에서 고른 절도 함께 들어간다 — 숫자만 보고 놀라지 않게
+    const visible = this.keywordHits
+      ? new Set(this.keywordView.map((h) => h.entry.linkTarget))
+      : null;
+    const hidden = visible ? verses.filter((v) => !visible.has(v.linkTarget)).length : 0;
+    this.insertBtnEl.title = hidden > 0 ? `다른 권·장에서 고른 ${hidden}절 포함` : "";
   }
 
   /** 삽입 직전 편집기 확인 — 복사 전용 모드면 안내 후 null */
@@ -1169,6 +1426,7 @@ export class VerseInsertModal extends Modal {
       const check = this.keywordChecks.get(linkTarget);
       if (check) check.checked = this.selected.has(linkTarget);
       this.updateInsertButton();
+      this.renderFilterBar(); // (선택 N) 숫자
       this.renderContext();
       return;
     }
@@ -1181,7 +1439,8 @@ export class VerseInsertModal extends Modal {
     sessionVersion = v;
     this.renderVersionBar();
     if (this.keywordHits) {
-      // 키워드 매칭은 역본 종속 — 바뀐 역본으로 재검색
+      // 키워드 매칭은 역본 종속 — 바뀐 역본으로 재검색 (보던 범위·권·장은 그대로)
+      this.restoreFilter = { query: this.inputEl.value.trim(), filter: this.filter };
       void this.runSearch();
       return;
     }
@@ -1220,7 +1479,7 @@ export class VerseInsertModal extends Modal {
   }
 
   private moveHighlight(dir: 1 | -1) {
-    const count = this.keywordHits?.length ?? this.loaded?.verses.length ?? 0;
+    const count = this.keywordHits ? this.keywordView.length : (this.loaded?.verses.length ?? 0);
     if (count === 0) return;
     const next = this.highlight + dir;
     if (next < 0) {
@@ -1257,7 +1516,7 @@ export class VerseInsertModal extends Modal {
     if (e.key === " ") {
       e.preventDefault();
       const verse = this.keywordHits
-        ? this.keywordHits[this.highlight]?.entry
+        ? this.keywordView[this.highlight]?.entry
         : this.loaded?.verses[this.highlight];
       if (verse && verse.texts[this.version]) this.toggleVerse(verse.linkTarget);
       return;
@@ -1274,22 +1533,29 @@ export class VerseInsertModal extends Modal {
   }
 
   private toggleAll() {
-    const items = this.keywordHits
-      ? this.keywordHits.map((h) => h.entry)
-      : this.loaded?.verses;
-    if (!items) return;
-    const insertable = items.filter((v) => v.texts[this.version]);
-    const allSelected = insertable.every((v) => this.selected.has(v.linkTarget));
-    if (allSelected) this.selected.clear();
-    else this.selected = new Set(insertable.map((v) => v.linkTarget));
     if (this.keywordHits) {
+      // 지금 보이는 줄(필터)만 더하거나 뺀다 — 다른 권·장에서 고른 절은 그대로
+      const visible = this.keywordView.map((h) => h.entry).filter((v) => v.texts[this.version]);
+      if (visible.length === 0) return;
+      const allSelected = visible.every((v) => this.selected.has(v.linkTarget));
+      for (const v of visible) {
+        if (allSelected) this.selected.delete(v.linkTarget);
+        else this.selected.add(v.linkTarget);
+      }
       // 렌더링된 체크박스만 동기화 (미렌더 청크는 생성 시 selected를 반영)
       for (const [linkTarget, check] of this.keywordChecks) {
         check.checked = this.selected.has(linkTarget) && !check.disabled;
       }
       this.updateInsertButton();
+      this.renderFilterBar(); // (선택 N) 숫자
       return;
     }
+    const items = this.loaded?.verses;
+    if (!items) return;
+    const insertable = items.filter((v) => v.texts[this.version]);
+    const allSelected = insertable.every((v) => this.selected.has(v.linkTarget));
+    if (allSelected) this.selected.clear();
+    else this.selected = new Set(insertable.map((v) => v.linkTarget));
     this.renderList();
   }
 
@@ -1419,7 +1685,7 @@ export class VerseInsertModal extends Modal {
     if (!editor) return;
     if (this.keywordHits) {
       const idx = this.highlight >= 0 ? this.highlight : 0;
-      const entry = this.keywordHits[idx]?.entry;
+      const entry = this.keywordView[idx]?.entry;
       if (!entry) return;
       if (!entry.texts[this.version]) {
         new Notice(`이 절에는 ${this.version} 본문이 없습니다.`);
