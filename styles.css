@@ -608,6 +608,54 @@
   align-self: flex-start;
 }
 
+/* 연구 자료 — 줄 모양은 인용한 설교와 같고, 위 노트(견해 지도) 줄 아래에 묶음(원문 발췌 20 ▸)과
+   펼친 칩이 제목 열에 맞춰 들어간다 */
+.bible-verse-research-sub {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  padding: 0 6px 3px;
+}
+
+/* 묶음 버튼(원문 발췌 20 ▸) 한 줄 + 펼치면 그 아래 칩 줄 */
+.bible-verse-research-bundle {
+  grid-column: 3 / -1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+
+.bible-verse-citing-list.is-flat .bible-verse-research-bundle {
+  grid-column: 2 / -1;
+}
+
+.bible-verse-research-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 지금 미리보기 중인 원문 발췌 칩 */
+.bible-verse-research-chip.is-active {
+  background: var(--background-modifier-hover);
+  box-shadow: inset 0 0 0 1px var(--interactive-accent);
+}
+
+/* 오래된 설치본(subgrid 없음) — 고정 폭 열(위 인용한 설교 대체 규칙)의 제목 자리만큼 들여 쓴다 */
+@supports not (grid-template-columns: subgrid) {
+  .bible-verse-research-sub {
+    display: block;
+    padding-left: calc(6px + 6.5em + 6em + 2 * var(--size-4-3));
+  }
+
+  .bible-verse-citing-list.is-flat .bible-verse-research-sub {
+    padding-left: calc(6px + 6.5em + var(--size-4-3));
+  }
+}
+
 .bible-verse-btn-group {
   display: flex;
   gap: var(--size-4-2);

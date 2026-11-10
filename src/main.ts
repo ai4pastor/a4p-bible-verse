@@ -32,6 +32,7 @@ export default class BibleVersePlugin extends Plugin {
       otPath: this.settings.otPath,
       ntPath: this.settings.ntPath,
       commentaryPath: this.settings.commentaryPath,
+      researchPath: this.settings.researchPath,
       sermonFolder: this.settings.sermonFolder,
       versionNames: versionNames(this.settings.versions),
     }));

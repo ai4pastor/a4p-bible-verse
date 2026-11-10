@@ -8,6 +8,7 @@ import {
   matchBookFolders,
   normalizeFolderPath,
 } from "./paths";
+import { ResearchItem, ResearchSource, collectResearch } from "./research";
 import { BibleReference, VerseData, Version } from "./types";
 import {
   BOOK_SCAN_DEPTH,
@@ -25,6 +26,8 @@ export interface BibleDataSettings {
   otPath: string;
   ntPath: string;
   commentaryPath: string;
+  /** 연구 자료 폴더 — 비우면 「연구 자료」 기능 끔 */
+  researchPath: string;
   sermonFolder: string;
   /** 설정의 등록 역본 이름 — 검증·표본 확인에서 노트 콜아웃 제목과 대조 */
   versionNames: string[];
@@ -53,6 +56,19 @@ export interface LoadResult {
 }
 
 export type LoadOutcome = { ok: true; result: LoadResult } | { ok: false; reason: string };
+
+/** 폴더 아래(하위 폴더 포함)의 마크다운 노트 전부 */
+function markdownFilesIn(folder: TFolder): TFile[] {
+  const out: TFile[] = [];
+  const walk = (f: TFolder) => {
+    for (const child of f.children) {
+      if (child instanceof TFolder) walk(child);
+      else if (child instanceof TFile && child.extension === "md") out.push(child);
+    }
+  };
+  walk(folder);
+  return out;
+}
 
 /** frontmatter 값("[[롬5_8]]" 문자열 리스트)에서 링크 대상만 추출 */
 function extractRefLinks(value: unknown): string[] {
@@ -95,6 +111,26 @@ export class BibleData {
 
   private commentaryRoot(): string {
     return normalizeFolderPath(this.getPaths().commentaryPath);
+  }
+
+  private researchRoot(): string {
+    return normalizeFolderPath(this.getPaths().researchPath);
+  }
+
+  /** 설정한 연구 자료 폴더 — 미설정·없는 경로면 null */
+  private researchFolder(): TFolder | null {
+    const root = this.researchRoot();
+    if (!root) return null;
+    const folder = this.app.vault.getAbstractFileByPath(root);
+    return folder instanceof TFolder ? folder : null;
+  }
+
+  /**
+   * 연구 자료 폴더의 실제 경로(볼트가 돌려준 표기) — 모달이 분류 폴더를 판정할 때 researchNotes와
+   * 같은 기준을 쓰도록. 미설정·없는 경로면 빈 값.
+   */
+  researchRootPath(): string {
+    return this.researchFolder()?.path ?? "";
   }
 
   /** 설정(폴더 경로) 변경 시 호출 */
@@ -551,16 +587,7 @@ export class BibleData {
     if (!root) return null;
     const folder = this.app.vault.getAbstractFileByPath(root);
     if (!(folder instanceof TFolder)) return null;
-    const files: Array<{ path: string; name: string }> = [];
-    const walk = (f: TFolder) => {
-      for (const child of f.children) {
-        if (child instanceof TFolder) walk(child);
-        else if (child instanceof TFile && child.extension === "md") {
-          files.push({ path: child.path, name: child.name });
-        }
-      }
-    };
-    walk(folder);
+    const files = markdownFilesIn(folder).map((f) => ({ path: f.path, name: f.name }));
     this.commentaryIndex = buildCommentaryIndex(files);
     return this.commentaryIndex;
   }
@@ -639,7 +666,7 @@ export class BibleData {
       return {
         ok: true,
         messages: [
-          "설교 폴더가 비어 있습니다 — 성경·주석 폴더를 제외한 전체 볼트에서 인용을 찾습니다.",
+          "설교 폴더가 비어 있습니다 — 성경·주석·연구 자료 폴더를 제외한 전체 볼트에서 인용을 찾습니다.",
         ],
       };
     }
@@ -653,16 +680,106 @@ export class BibleData {
     return { ok: true, messages: [`✅ 설교 폴더 인식 — 노트 ${count}개`] };
   }
 
+  /** 설정 탭의 연구 자료 폴더 검증 버튼용 — 노트 수와, 그중 구절 노트를 링크한 노트 수 */
+  async validateResearchFolder(): Promise<{ ok: boolean; messages: string[] }> {
+    const root = this.researchRoot();
+    if (!root) {
+      return {
+        ok: true,
+        messages: [
+          "연구 자료 폴더가 비어 있습니다 — 모달에 연구 자료를 표시하지 않습니다. 다른 기능은 그대로 작동합니다.",
+        ],
+      };
+    }
+    const folder = this.researchFolder();
+    if (!folder) {
+      return { ok: false, messages: [`연구 자료 폴더를 찾을 수 없습니다: "${root}"`] };
+    }
+    const bibleRoots = [this.otPath(), this.ntPath()].filter(Boolean);
+    const excludes = [...bibleRoots, this.commentaryRoot()].filter(Boolean);
+    if (excludes.some((p) => isUnderFolder(folder.path, p))) {
+      return {
+        ok: false,
+        messages: [
+          "⚠️ 연구 자료 폴더가 성경 폴더나 주석 폴더 안에 있습니다. 그 안의 노트는 연구 자료로 보여 주지 않으니, 연구 노트를 따로 모아 둔 폴더를 선택해주세요.",
+        ],
+      };
+    }
+    const files = markdownFilesIn(folder).filter(
+      (f) => !excludes.some((p) => isUnderFolder(f.path, p)),
+    );
+    if (files.length === 0) {
+      return { ok: false, messages: [`⚠️ 폴더는 있지만 노트가 하나도 없습니다: "${folder.path}"`] };
+    }
+    const messages = [`✅ 연구 자료 폴더 인식 — 노트 ${files.length}개`];
+    if (bibleRoots.length === 0) {
+      messages.push(
+        "ℹ️ 성경 폴더를 설정하면 구절 노트로 가는 링크가 있는 노트 수도 함께 확인합니다.",
+      );
+      return { ok: true, messages };
+    }
+    const links = this.app.metadataCache.resolvedLinks;
+    const verses = new Set<string>();
+    let linked = 0;
+    for (const f of files) {
+      let hit = false;
+      for (const target in links[f.path] ?? {}) {
+        if (!bibleRoots.some((p) => isUnderFolder(target, p))) continue;
+        if (!VERSE_FILE_RE.test(nfc(target.split("/").pop() ?? ""))) continue;
+        verses.add(target);
+        hit = true;
+      }
+      if (hit) linked++;
+    }
+    if (linked === 0) {
+      messages.push(
+        "⚠️ 이 폴더의 노트에서 성경 구절 노트로 가는 링크를 찾지 못했습니다. 노트 안에 [[마6_13]]처럼 구절 노트 링크가 있어야 모달의 「연구 자료」에 나타납니다.",
+      );
+      return { ok: false, messages };
+    }
+    messages.push(
+      `✅ 구절 노트를 링크한 노트 ${linked}개 · 링크된 구절 ${verses.size.toLocaleString("ko-KR")}개`,
+    );
+    return { ok: true, messages };
+  }
+
+  /**
+   * 연구 자료 — 연구 자료 폴더 안에서 주어진 구절 노트들을 링크한 노트를, 위 노트(견해 지도 등) 아래에
+   * 그 노트가 링크한 하위 폴더 노트(원문 발췌 등)를 묶어 돌려준다(research.ts). 캐시 없이 검색마다
+   * 이 폴더만 훑는다 — 연구 노트 수만큼만 돌고, 새로 만든 노트도 링크 캐시가 갱신되는 즉시 잡힌다.
+   */
+  researchNotes(versePaths: string[]): ResearchItem[] {
+    const targets = versePaths.filter(Boolean);
+    if (targets.length === 0) return [];
+    const folder = this.researchFolder();
+    if (!folder) return [];
+    // 성경·주석 폴더가 연구 자료 폴더 안에 있어도 구절 노트·주석 노트는 연구 자료가 아니다
+    const excludes = [this.otPath(), this.ntPath(), this.commentaryRoot()].filter(Boolean);
+    const links = this.app.metadataCache.resolvedLinks;
+    const sources: ResearchSource[] = [];
+    for (const file of markdownFilesIn(folder)) {
+      if (excludes.some((p) => isUnderFolder(file.path, p))) continue;
+      sources.push({ path: file.path, links: links[file.path] });
+    }
+    // 폴더 경로는 설정 문자열이 아니라 볼트가 돌려준 실제 경로로 — 정규화(NFC·NFD) 차이 방어
+    return collectResearch(sources, folder.path, targets);
+  }
+
   /**
    * 주어진 구절 노트들을 인용(링크)한 노트 경로 목록.
-   * 설교 폴더가 있으면 그 안에서만, 없으면 성경·주석 폴더 제외 전체에서 찾는다.
+   * 설교 폴더가 있으면 그 안에서만, 없으면 성경·주석·연구 자료 폴더 제외 전체에서 찾는다.
    * 날짜 접두 파일명이 최신순이 되도록 경로 내림차순 정렬.
    */
   citingNotes(versePaths: string[]): string[] {
     const targets = versePaths.filter(Boolean);
     if (targets.length === 0) return [];
-    // 주석 노트는 구절을 대량 링크하므로 "인용한 설교"에서 제외
-    const excludes = [this.otPath(), this.ntPath(), this.commentaryRoot()].filter(Boolean);
+    // 주석 노트는 구절을 대량 링크하므로, 연구 노트는 「연구 자료」에 따로 나오므로 "인용한 설교"에서 제외
+    const excludes = [
+      this.otPath(),
+      this.ntPath(),
+      this.commentaryRoot(),
+      this.researchRootPath(),
+    ].filter(Boolean);
     const sermonRoot = normalizeFolderPath(this.getPaths().sermonFolder);
     const links = this.app.metadataCache.resolvedLinks;
     const results: string[] = [];

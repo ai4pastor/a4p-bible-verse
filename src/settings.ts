@@ -48,6 +48,11 @@ export interface BibleVerseSettings {
   stripAnnotations: boolean;
   /** 볼트 루트 기준 주석 폴더 경로 — 성경 폴더와 무관하게 지정. 비우면 주석 기능 끔 */
   commentaryPath: string;
+  /**
+   * 볼트 루트 기준 연구 자료 폴더 경로 — 성경 구절을 중심으로 정리한 연구 노트(견해 지도·원문 발췌 등).
+   * 검색한 구절 노트를 링크한 노트를 모달 「연구 자료」에 보여 준다(research.ts). 비우면 기능 끔
+   */
+  researchPath: string;
   /** 키워드 본문 검색 대상 — "current": 현재 선택 역본만, "all": 등록 역본 전체 */
   keywordSearchScope: "current" | "all";
   /**
@@ -72,6 +77,7 @@ export const DEFAULT_SETTINGS: BibleVerseSettings = {
   sermonFolder: "",
   stripAnnotations: false,
   commentaryPath: "",
+  researchPath: "",
   keywordSearchScope: "current",
   enableKeywordSearch: true,
 };
@@ -248,8 +254,18 @@ export class BibleVerseSettingTab extends PluginSettingTab {
     });
 
     this.addFolderField(containerEl, {
+      name: "연구 자료 폴더 경로",
+      desc: "성경 구절을 중심으로 정리한 연구 노트(견해 지도·원문 발췌 등)를 넣어둔 폴더를 선택하세요. 검색한 구절 노트로 가는 링크가 있는 노트를 모달의 「연구 자료」에 보여줍니다. 위 폴더의 노트(견해 지도)가 링크한 하위 폴더의 노트(원문 발췌)는 그 아래에 묶어 접어 둡니다. 비우면 이 기능을 끕니다.",
+      getValue: () => this.plugin.settings.researchPath,
+      setValue: (v) => {
+        this.plugin.settings.researchPath = v;
+      },
+      validate: () => this.plugin.bibleData.validateResearchFolder(),
+    });
+
+    this.addFolderField(containerEl, {
       name: "설교 폴더 경로",
-      desc: "검색한 구절을 인용한 설교를 이 폴더에서 찾아 모달에 보여줍니다. 비우면 성경·주석 폴더를 제외한 전체 볼트에서 찾습니다.",
+      desc: "검색한 구절을 인용한 설교를 이 폴더에서 찾아 모달에 보여줍니다. 비우면 성경·주석·연구 자료 폴더를 제외한 전체 볼트에서 찾습니다.",
       getValue: () => this.plugin.settings.sermonFolder,
       setValue: (v) => {
         this.plugin.settings.sermonFolder = v;

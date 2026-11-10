@@ -23,6 +23,8 @@ function v1Settings(paths: Partial<BibleVerseSettings>): BibleVerseSettings {
     sermonFolder: "300. Sermons",
     stripAnnotations: false,
     commentaryPath: "171. 성경주석",
+    // 0.14에 생긴 키 — 옛 data.json에는 없고 로드 때 기본값("")으로 채워진다
+    researchPath: "",
     keywordSearchScope: "current",
     enableKeywordSearch: true,
     ...paths,
