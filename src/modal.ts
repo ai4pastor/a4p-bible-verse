@@ -12,6 +12,7 @@ import { BUILD_CANCELLED } from "./verse-index";
 import { ConfirmBuildModal } from "./confirm-build-modal";
 import { normalizeFolderPath } from "./paths";
 import { ResearchItem, chipLabels, groupChildren } from "./research";
+import { markCitations, nearestHeadingFor, renderCiteNav, stripFrontmatter } from "./cite-highlight";
 import {
   NO_FILTER,
   ResultFilter,
@@ -977,7 +978,7 @@ export class VerseInsertModal extends Modal {
     const openBtn = actions.createEl("button", { text: "열기", cls: "mod-cta" });
     openBtn.addEventListener("click", () => {
       // 주석은 pericope 헤딩으로, 인용한 설교는 현재 인용 블록의 인접 헤딩으로 (없으면 파일 맨 위)
-      const sub = heading ?? this.nearestHeadingFor(body, this.citeCurrent, file);
+      const sub = heading ?? nearestHeadingFor(this.app, body, this.citeCurrent, file);
       const linktext = sub ? `${file.path}#${sub}` : file.path;
       void this.app.workspace.openLinkText(linktext, "", true);
       this.close();
@@ -985,11 +986,7 @@ export class VerseInsertModal extends Modal {
     const closeBtn = actions.createEl("button", { text: "✕" });
     closeBtn.addEventListener("click", () => this.closePreview());
 
-    let md = await this.app.vault.cachedRead(file);
-    if (md.startsWith("---")) {
-      const end = md.indexOf("\n---", 3);
-      if (end !== -1) md = md.slice(end + 4);
-    }
+    let md = stripFrontmatter(await this.app.vault.cachedRead(file));
     if (heading) md = extractHeadingSection(md, heading);
 
     await MarkdownRenderer.render(this.app, md, body, file.path, this.previewComponent);
@@ -997,8 +994,10 @@ export class VerseInsertModal extends Modal {
     if (this.currentPreview !== opts) return;
 
     if (highlightPaths && highlightPaths.length > 0) {
-      const blocks = this.markCitations(body, file.path, highlightPaths);
-      this.renderCiteNav(citeNav, body, blocks, file, highlightPaths);
+      const blocks = markCitations(this.app, body, file.path, highlightPaths);
+      renderCiteNav(this.app, citeNav, body, blocks, file, highlightPaths, {
+        onCurrent: (block) => (this.citeCurrent = block),
+      });
     }
 
     // 미리보기 안의 위키링크 → 연쇄 미리보기 (모달을 떠나지 않음)
@@ -1029,128 +1028,6 @@ export class VerseInsertModal extends Modal {
     this.currentPreview = null;
     this.citeCurrent = null;
     this.syncCitingActive();
-  }
-
-  /** 렌더된 링크·임베드 요소가 가리키는 노트 경로 — 미해석 링크는 null */
-  private resolveRenderedLink(el: HTMLElement, sourcePath: string): string | null {
-    const raw = el.matches("a")
-      ? el.getAttribute("data-href") ?? el.getAttribute("href")
-      : el.getAttribute("src");
-    if (!raw) return null;
-    const linkpath = raw.split("#")[0];
-    return this.app.metadataCache.getFirstLinkpathDest(linkpath, sourcePath)?.path ?? null;
-  }
-
-  /**
-   * 인용한 설교 미리보기: paths(검색 중인 절 노트 경로)를 가리키는 링크·임베드에 강조 클래스를
-   * 붙이고, 그 컨테이너 블록(불릿·문단·콜아웃…)을 문서 순서로 중복 없이 돌려준다.
-   * "인용 N곳"은 블록 단위 — 플러그인이 삽입한 범위 콜아웃(제목 링크 + 절별 링크)은 1곳.
-   */
-  private markCitations(body: HTMLElement, sourcePath: string, paths: string[]): HTMLElement[] {
-    const wanted = new Set(paths);
-    const blockSelector = "li, p, td, th, blockquote, h1, h2, h3, h4, h5, h6";
-    const blocks: HTMLElement[] = [];
-    const candidates = body.querySelectorAll<HTMLElement>("a.internal-link, .internal-embed[src]");
-    for (const el of Array.from(candidates)) {
-      const dest = this.resolveRenderedLink(el, sourcePath);
-      if (!dest || !wanted.has(dest)) continue;
-      el.addClass("bible-verse-cite");
-      const block =
-        el.closest<HTMLElement>(".callout") ??
-        el.closest<HTMLElement>(blockSelector) ??
-        el.parentElement ??
-        el;
-      if (blocks.includes(block)) continue;
-      block.addClass("bible-verse-cite-block");
-      blocks.push(block);
-    }
-    return blocks;
-  }
-
-  /**
-   * 미리보기 본문(overflow 컨테이너) 안에서만 스크롤한다 — scrollIntoView는 모달·페이지 조상까지
-   * 움직여 모달 상단 고정을 깨뜨릴 수 있다. 대상 블록을 상단 1/3 지점에 둔다.
-   */
-  private scrollPreviewTo(body: HTMLElement, el: HTMLElement) {
-    const b = body.getBoundingClientRect();
-    const r = el.getBoundingClientRect();
-    body.scrollTop += r.top - b.top - Math.max(0, (body.clientHeight - r.height) / 3);
-  }
-
-  /** 헤더의 "인용 N/M" 배지와 ↑/↓ 이동 버튼. 매치가 없으면 사유(속성에서만 인용 등)를 배지로 알린다 */
-  private renderCiteNav(
-    nav: HTMLElement,
-    body: HTMLElement,
-    blocks: HTMLElement[],
-    file: TFile,
-    paths: string[],
-  ) {
-    nav.empty();
-    if (blocks.length === 0) {
-      // resolvedLinks엔 잡히지만 본문 렌더엔 없는 경우: frontmatter 속성 링크(성경구절 등)가 대표적
-      const wanted = new Set(paths);
-      const fmOnly = (this.app.metadataCache.getFileCache(file)?.frontmatterLinks ?? []).some((l) => {
-        const dest = this.app.metadataCache.getFirstLinkpathDest(l.link.split("#")[0], file.path);
-        return !!dest && wanted.has(dest.path);
-      });
-      const badge = nav.createSpan({
-        cls: "bible-verse-cite-badge is-empty",
-        text: fmOnly ? "속성에서만 인용" : "인용 위치 없음",
-      });
-      badge.title = fmOnly
-        ? "본문에는 링크가 없고 frontmatter 속성(예: 성경구절)에서만 인용했습니다"
-        : "본문에서 이 구절로 가는 링크를 찾지 못했습니다";
-      return;
-    }
-
-    let cur = 0;
-    const badge = nav.createSpan({ cls: "bible-verse-cite-badge" });
-    const show = (idx: number) => {
-      blocks[cur].removeClass("is-current");
-      cur = (idx + blocks.length) % blocks.length;
-      blocks[cur].addClass("is-current");
-      badge.setText(blocks.length === 1 ? "인용 1곳" : `인용 ${cur + 1}/${blocks.length}`);
-      this.citeCurrent = blocks[cur];
-      this.scrollPreviewTo(body, blocks[cur]);
-    };
-    if (blocks.length > 1) {
-      const prev = nav.createEl("button", { text: "↑" });
-      prev.title = "이전 인용 위치";
-      prev.tabIndex = -1;
-      prev.addEventListener("click", () => show(cur - 1));
-      const next = nav.createEl("button", { text: "↓" });
-      next.title = "다음 인용 위치";
-      next.tabIndex = -1;
-      next.addEventListener("click", () => show(cur + 1));
-    }
-    // 레이아웃이 확정된 뒤 첫 인용 위치로
-    window.requestAnimationFrame(() => {
-      if (body.isConnected) show(0);
-    });
-  }
-
-  /**
-   * 블록 바로 앞의 헤딩 텍스트 — 메타데이터 캐시의 헤딩과 정확히 일치할 때만 돌려준다.
-   * (헤딩에 인라인 마크다운·링크가 있어 렌더 텍스트가 다르면 undefined → 파일 맨 위로 연다)
-   */
-  private nearestHeadingFor(
-    body: HTMLElement,
-    block: HTMLElement | null,
-    file: TFile,
-  ): string | undefined {
-    if (!block) return undefined;
-    let found: string | undefined;
-    for (const h of Array.from(body.querySelectorAll<HTMLElement>("h1, h2, h3, h4, h5, h6"))) {
-      // 헤딩이 블록보다 뒤에 있으면 중단
-      if (!(h.compareDocumentPosition(block) & Node.DOCUMENT_POSITION_FOLLOWING)) break;
-      found = h.dataset.heading ?? h.textContent ?? undefined;
-    }
-    if (!found) return undefined;
-    const target = found.trim();
-    // 헤딩 자체가 위키링크(`## [[…]]`)이거나 #·|·^가 들어 있으면 `path#heading` 서브패스 문법이 깨진다
-    if (/[[\]#|^]/.test(target)) return undefined;
-    const headings = this.app.metadataCache.getFileCache(file)?.headings ?? [];
-    return headings.some((hc) => hc.heading.trim() === target) ? target : undefined;
   }
 
   /** Cmd 호버 시 옵시디언 페이지 미리보기 (hover-editor 설치 시 그쪽으로 연동) */
