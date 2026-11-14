@@ -1,4 +1,5 @@
 import { Plugin, TFolder } from "obsidian";
+import { AtlasViewState, SermonAtlasModal, defaultAtlasState } from "./atlas-modal";
 import { BibleData } from "./bible-data";
 import { isUnderFolder, normalizeFolderPath } from "./paths";
 import { SETTINGS_VERSION, migrateSettings } from "./settings-migrate";
@@ -22,6 +23,8 @@ export default class BibleVersePlugin extends Plugin {
   settings!: BibleVerseSettings;
   bibleData!: BibleData;
   verseIndex!: VerseIndex;
+  /** 설교 성경 지도 창에서 보던 화면 — 다시 열면 그대로(옵시디언을 끄면 초기화, 저장하지 않음) */
+  atlasState: AtlasViewState = defaultAtlasState();
   private loadedSettingsVersion = SETTINGS_VERSION;
   /** onLayoutReady 콜백이 플러그인 unload 이후 실행되는 경우를 막는 플래그 */
   private unloaded = false;
@@ -55,6 +58,13 @@ export default class BibleVersePlugin extends Plugin {
       },
     });
 
+    // 설교 성경 지도 (v0.15) — 성경 구절 모달처럼 큰 창으로. 계산은 창을 열 때만 한다
+    this.addCommand({
+      id: "open-sermon-atlas",
+      name: "설교 성경 지도 열기",
+      callback: () => new SermonAtlasModal(this.app, this).open(),
+    });
+
     this.registerEditorSuggest(new BibleVerseSuggest(this));
 
     this.registerHoverLinkSource("a4p-bible-verse", {
@@ -76,6 +86,7 @@ export default class BibleVersePlugin extends Plugin {
   onunload() {
     this.unloaded = true;
   }
+
 
   /**
    * 구절 노트 변경 시 인덱스 증분 갱신(빌드 전에는 no-op) + 책 단위 캐시 무효화,

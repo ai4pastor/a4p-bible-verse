@@ -1,4 +1,6 @@
-import { App, TFile, TFolder } from "obsidian";
+import { App, TFile, TFolder, getLinkpath } from "obsidian";
+import type { AtlasInputNote } from "./atlas";
+import { dateFromProperty, sermonGroup, type SermonDate } from "./sermon-meta";
 import { BOOK_BY_ABBREV, BOOKS, BookInfo, bookByFolderName } from "./books";
 import { extractVerseTexts, listQuoteTitles, stripAnnotations } from "./note-parser";
 import {
@@ -795,5 +797,62 @@ export class BibleData {
       }
     }
     return results.sort().reverse();
+  }
+
+  /**
+   * 설교 성경 지도 입력 — 설교 폴더 아래 노트마다 폴더 부서·속성 날짜·절 링크(속성 순서 / 전체).
+   * 「인용한 설교」(citingNotes)와 같은 제외 규칙(성경·주석·연구 자료 폴더)과 같은 부서·날짜 판독.
+   * 설교 폴더를 비우면 볼트 전체가 설교로 잡혀 지도가 무의미하므로 그리지 않는다(state "unset").
+   * 노트를 열지 않고 메타데이터 캐시만 읽는다. 경로 비교는 NFC로 맞춘다(자모 분리 폴더 방어).
+   */
+  sermonAtlasInput(dateKeys: readonly string[] = ["date", "설교일"]): {
+    state: "unset" | "missing" | "ok";
+    root: string;
+    notes: AtlasInputNote[];
+  } {
+    const root = normalizeFolderPath(this.getPaths().sermonFolder);
+    if (!root) return { state: "unset", root, notes: [] };
+    const folder = this.app.vault.getAbstractFileByPath(root);
+    if (!(folder instanceof TFolder)) return { state: "missing", root, notes: [] };
+
+    const verseRoots = [this.otPath(), this.ntPath()].filter(Boolean).map(nfc);
+    const excludes = [...verseRoots, nfc(this.commentaryRoot()), nfc(this.researchRootPath())].filter(
+      Boolean,
+    );
+    const isVerse = (p: string) => {
+      const q = nfc(p);
+      return verseRoots.some((r) => isUnderFolder(q, r));
+    };
+    const base = nfc(root);
+    const cache = this.app.metadataCache;
+    const notes: AtlasInputNote[] = [];
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      const path = nfc(file.path);
+      if (!isUnderFolder(path, base)) continue;
+      if (excludes.some((p) => isUnderFolder(path, p))) continue;
+      const meta = cache.getFileCache(file);
+      const propertyVerses: string[] = [];
+      for (const l of meta?.frontmatterLinks ?? []) {
+        const dest = cache.getFirstLinkpathDest(getLinkpath(l.link), file.path);
+        if (dest && isVerse(dest.path)) propertyVerses.push(dest.basename);
+      }
+      const linkedVerses = Object.keys(cache.resolvedLinks[file.path] ?? {})
+        .filter(isVerse)
+        .map((p) => p.slice(p.lastIndexOf("/") + 1).replace(/\.md$/, ""));
+      let propertyDate: SermonDate | undefined;
+      for (const key of dateKeys) {
+        propertyDate = dateFromProperty(meta?.frontmatter?.[key]);
+        if (propertyDate) break;
+      }
+      notes.push({
+        path: file.path,
+        basename: file.basename,
+        group: sermonGroup(path, base),
+        propertyVerses,
+        linkedVerses,
+        propertyDate,
+      });
+    }
+    return { state: "ok", root: folder.path, notes };
   }
 }
