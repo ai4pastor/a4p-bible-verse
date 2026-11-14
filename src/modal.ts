@@ -237,19 +237,7 @@ export class VerseInsertModal extends Modal {
       e.preventDefault();
       this.moveHighlight(-1);
     });
-    this.scope.register([], "Escape", (e) => {
-      if (this.previewOpen) {
-        e.preventDefault();
-        // 미리보기에서 Esc = 뒤로가기 (연쇄 미리보기는 한 단계씩 복귀)
-        if (this.navStack.length > 0) this.goBack();
-        else this.closePreview();
-      } else if (this.highlight >= 0) {
-        e.preventDefault();
-        this.focusInput();
-      } else {
-        this.close();
-      }
-    });
+    // Esc는 onEscapeKey, 마우스 뒤로가기는 onHistoryBack (아래) — 옵시디언 모달이 직접 부른다
     // 옵시디언 탐색 뒤로가기 단축키를 모달 내 뒤로가기로 흡수
     this.scope.register(["Mod"], "[", (e) => {
       e.preventDefault();
@@ -259,11 +247,6 @@ export class VerseInsertModal extends Modal {
       e.preventDefault();
       this.goBack();
     });
-
-    // 마우스 뒤로가기(버튼 4)·앞으로가기(버튼 5) — 옵시디언 전역 탐색이
-    // 모달을 닫아버리지 않도록 캡처 단계에서 가로채 모달 내 뒤로가기로 연결
-    window.addEventListener("mousedown", this.onMouseNav, { capture: true });
-    window.addEventListener("mouseup", this.onMouseNav, { capture: true });
 
     this.renderEmptyState();
     this.inputEl.focus();
@@ -278,21 +261,39 @@ export class VerseInsertModal extends Modal {
   }
 
   onClose() {
-    window.removeEventListener("mousedown", this.onMouseNav, { capture: true });
-    window.removeEventListener("mouseup", this.onMouseNav, { capture: true });
     if (this.debounceTimer !== null) window.clearTimeout(this.debounceTimer);
     this.previewComponent.unload();
     this.contentEl.empty();
   }
 
+  /**
+   * Esc — 미리보기 중이면 뒤로가기(연쇄 미리보기는 한 단계씩), 목록에 있으면 입력창으로, 아니면 닫기.
+   * 옵시디언 모달은 생성자에서 Escape를 이 메서드에 먼저 묶어 두므로(scope는 먼저 등록한 처리기가 이긴다)
+   * scope.register(Escape)를 더하는 대신 이것을 바꾼다 — 예전 방식은 미리보기 중에도 창 전체를 닫았다.
+   */
+  onEscapeKey(evt: KeyboardEvent) {
+    if (evt.defaultPrevented) return;
+    evt.preventDefault();
+    if (this.previewOpen) {
+      if (this.navStack.length > 0) this.goBack();
+      else this.closePreview();
+    } else if (this.highlight >= 0) {
+      this.focusInput();
+    } else {
+      this.close();
+    }
+  }
+
   // ── 뒤로가기 (모달 내 히스토리) ────────────────────────
 
-  private onMouseNav = (e: MouseEvent) => {
-    if (e.button !== 3 && e.button !== 4) return;
-    e.preventDefault();
-    e.stopImmediatePropagation();
-    if (e.type === "mouseup" && e.button === 3) this.goBack();
-  };
+  /**
+   * 마우스 뒤로가기 단추(·휴대폰 뒤로가기) — 옵시디언이 맨 위 모달의 이 메서드를 부른다(기본 동작 = 창 닫기).
+   * 돌아갈 화면(미리보기·이전 검색)이 있으면 모달 안에서 한 단계 뒤로, 없으면 닫는다.
+   */
+  onHistoryBack() {
+    if (this.previewOpen || this.navStack.length > 0) this.goBack();
+    else this.close();
+  }
 
   /** 현재 화면(미리보기 또는 검색 목록)을 히스토리에 저장 — 화면 전환 직전에 호출 */
   private pushNav() {
