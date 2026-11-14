@@ -26,11 +26,16 @@
 - 가운데: 66권 칸 — 구약·신약 × 장르 10묶음(토라·역사서·시가서·대선지서·소선지서 / 사복음서·사도행전·바울서신·일반서신·요한계시록). 진하기 = 설교 수(제곱근 비례 4단계), 빈 책은 점선
 - 책을 누르면: 장 막대(그 책의 장 수 칸, 설교한 장만 색) + 그 책 설교 전체 목록(10편 넘으면 [더보기], 「외 N개」로 줄이지 않음)
 - 아래 카드: 비어 있는 책(장르별) · 장르별 마지막 설교(오늘 이후 날짜는 「예정」) · 본문 미상(8편 넘으면 [더보기])
-- 설교 줄을 누르면 창을 닫고 그 노트를 새 탭으로 연다. 다시 열면 보던 화면(부서·기준·기간·고른 책) 그대로(플러그인 인스턴스가 기억, 저장하지 않음)
+- 설교 줄을 누르면 **창 오른쪽에 미리보기**(성경 구절 모달의 「인용한 설교」 미리보기와 같은 모양·같은 강조 코드). 창이 1150→1500px로 넓어져 왼쪽 지도가 두 단을 지키고, 누른 줄은 왼쪽 목록에서 같은 높이에 남는다(줄 `is-active`). 좁은 창(760px 이하)에서는 미리보기가 목록 자리를 차지한다
+- 미리보기: 고른 책의 인용 = 그 책 절 노트로 가는 링크(`versePathsLinkedFrom` — resolvedLinks) + 글자 표기(`bookMentionPattern`) → 블록 단위 「창세기 인용 2/5」 ↑/↓. [열기] = 창을 닫고 새 탭(`openLinkText(…, "tab")`, 지금 인용 앞 소제목 — `stripHeading`으로 캐시와 맞추고 `stripHeadingForLink`로 링크 글자). [✕] = 미리보기만 닫기. 미리보기 안 링크 = 이어서 미리보기, ←·`Esc`·마우스 뒤로가기 = 한 단계 뒤로(이어 본 노트 → 설교 → 닫기 → 창 닫기)
+- 노트가 여럿인 설교(「판 2」)는 본문에 그 책 인용(링크·글자)이 있는 첫 판을 열고, 머리줄 아래 「판 1 · 판 2」로 바꿔 본다. 본문 미상 카드의 줄도 미리보기(강조 없음)
+- 다시 열면 보던 화면(부서·기준·기간·고른 책) 그대로(플러그인 인스턴스가 기억, 저장하지 않음). 미리보기는 다시 열 때 닫힌 채
 
 ## 구조
 
-- `src/atlas.ts` — 순수 계산(obsidian 미의존, vitest): `buildSermons`(묶기·주 본문·추정·인용) · `aggregate` · `filterSermons` · `emptyBooksByGenre` · `lastByGenre` · `summarize` · `heatLevel` · `agoLabel` · `CHAPTER_COUNT` · `GENRES`·`canonIndex`
+- `src/atlas.ts` — 순수 계산(obsidian 미의존, vitest): `buildSermons`(묶기·주 본문·추정·인용) · `aggregate` · `filterSermons` · `emptyBooksByGenre` · `lastByGenre` · `summarize` · `heatLevel` · `agoLabel` · `CHAPTER_COUNT` · `GENRES`·`canonIndex` · `bookMentionPattern`·`findBookMentions`(본문 글자 속 책 표기 — 책 이름·별칭·약자 + 장 번호 + `:절`/`장`/`편`, 앞 글자가 한글이면 제외)
+- `src/cite-highlight.ts` — 미리보기 인용 강조 공용(성경 구절 모달과 함께): `markCitations`(링크 + 선택적 글자 표기 `<mark>`, 블록 문서 순) · `renderCiteNav`(배지 앞말·풀이 선택) · `nearestHeadingFor` · `scrollPreviewTo` · `stripFrontmatter`
+- `src/bible-data.ts` `versePathsLinkedFrom(path, 약자)` — 노트가 링크한 절 노트 중 그 책의 것(속성 링크 포함, 캐시만)
 - `src/bible-data.ts` `sermonAtlasInput()` — 설교 폴더 노트마다 폴더 부서·속성 날짜·속성 절 링크(순서)·전체 절 링크. 노트를 열지 않고 메타데이터 캐시만, 경로 비교는 NFC
 - `src/atlas-modal.ts` — 그리기(Modal). 부서 배지는 「인용한 설교」의 `bible-verse-citing-group is-cN` 재사용
 - `main.ts` — 명령 등록만(부팅 비용 0). 화면 상태 `atlasState`
@@ -41,12 +46,15 @@
 - 옵시디언 기본 버튼 스타일(`button:not(.clickable-icon)`)이 칸 배경을 덮는다 → `.a4p-atlas button.a4p-atlas-cell`로 우선순위를 올린다.
 - 진하기는 `::before` 겹(강조색 + 투명도)이라 따로 감싸지 않은 글자(장 번호)를 가린다 → `isolation: isolate` + 겹 `z-index: -1`.
 - `color-mix`·subgrid는 쓰지 않는다(구형 설치본 Chromium 117 미만).
+- 옵시디언 모달은 생성자에서 `Escape`를 `onEscapeKey`에 먼저 묶는다(Scope는 먼저 등록한 처리기가 이긴다) → `scope.register([], "Escape")`를 더해도 불리지 않는다. 미리보기 단계 복귀는 `onEscapeKey`·`onHistoryBack`(마우스 뒤로가기)을 덮어쓴다(옵시디언 설정 창의 하위 화면과 같은 방식).
+- 링크만 보면 교재 원고(어린이부 등)는 인용 위치를 못 찾는다(dev vault 주 본문 143편 중 113편만) → 글자 표기도 강조해 141편. 남은 2편은 본문에 그 책 표기가 실제로 없음(파일 이름 본문만).
 
 ## 검증 (dev vault, Obsidian CLI)
 
 - 지도 66칸, 빈 책·장르 카드, 책 클릭 → 장 막대·목록·더보기, 기준·부서·기간 단추
 - 설교 폴더 미지정 → 안내 / 없는 경로 → 안내 / 분류 폴더 없는 폴더 / 설교가 아닌 폴더(전부 본문 미상) — 오류 0
-- 닫고 다시 열기 → 보던 화면 그대로 · `Esc`로 닫힘 · 설교 줄 → 창 닫힘 + 새 탭
+- 닫고 다시 열기 → 보던 화면 그대로 · `Esc`로 닫힘
+- (11-14 미리보기) 설교 줄 → 오른쪽 미리보기·창 1500px·지도 두 단·누른 줄 높이 그대로 / 「창세기 인용 1/3」 ↑↓ 순환 / 링크 이어보기 → ← · `Esc` · 마우스 뒤로가기 단계 복귀(창 유지) / [열기] → 창 닫힘 + 새 탭, 3번째 인용 → `#[설명]` 소제목 줄 / 판 2 설교 → 인용 있는 판 먼저·판 전환 / 30권·143편 전수(주 본문) 오류 0
 - 시험 전후 `data.json` 해시 동일
 
 ## 다음 판 후보
