@@ -5,12 +5,14 @@ import {
   GENRES,
   agoLabel,
   aggregate,
+  bookMentionPattern,
   booksInGenre,
   buildSermons,
   canonIndex,
   departments,
   emptyBooksByGenre,
   filterSermons,
+  findBookMentions,
   formatDateKey,
   heatLevel,
   lastByGenre,
@@ -214,5 +216,71 @@ describe("표시 도우미", () => {
     expect(agoLabel(20211219, TODAY)).toBe("4년 전");
     expect(formatDateKey(20260329)).toBe("2026.03.29");
     expect(formatDateKey(0)).toBe("날짜 없음");
+  });
+});
+
+describe("본문 글자 속 성경 표기 (미리보기 인용 위치)", () => {
+  const found = (text: string, abbrev: string) => findBookMentions(text, abbrev).map((m) => m.text);
+
+  it("장:절 · 장 · 편 · 절 범위 — 정식 이름과 약자, 띄어쓰기 유무", () => {
+    const text =
+      "| 배울 말씀 | 창세기 22:1-18, 히 11:19 | 말씀하셨어요.(창 22:16-18) 창3:21 주 하나님이 · 창세기 22장 · 창세기1 장을 떠올리게 · 다말(창 38장), 룻";
+    expect(found(text, "창")).toEqual(["창세기 22:1-18", "창 22:16-18", "창3:21", "창세기 22장", "창세기1 장", "창 38장"]);
+    expect(found(text, "히")).toEqual(["히 11:19"]);
+    expect(found("고린도전서 15장 5-8절: 사도 · 고전 15:3-4 · 고린도전서 15:3 8", "고전")).toEqual([
+      "고린도전서 15장 5-8절",
+      "고전 15:3-4",
+      "고린도전서 15:3",
+    ]);
+    expect(found("시편 139편 8절입니다 · 시편 73편 25절 26절 · 시1:1 · 시편 19:1절과 · 시32편은", "시")).toEqual([
+      "시편 139편 8절",
+      "시편 73편 25절",
+      "시1:1",
+      "시편 19:1",
+      "시32편",
+    ]);
+  });
+
+  it("장을 넘는 범위·장 범위·절 앞 빈칸 — 표기 뒤 빈칸은 칠하지 않는다", () => {
+    expect(found("요 3:36-4:2 · 창세기 1장 1절-2장 3절 · 출 16장-17장 · 계시록12장 9 절입니다", "창")).toEqual([
+      "창세기 1장 1절-2장 3절",
+    ]);
+    expect(found("요 3:36-4:2", "요")).toEqual(["요 3:36-4:2"]);
+    expect(found("출 16장-17장 원망", "출")).toEqual(["출 16장-17장"]);
+    expect(found("계시록12장 9 절입니다 · 요한계시록 22:13 · 계 22:13", "계")).toEqual([
+      "계시록12장 9 절",
+      "요한계시록 22:13",
+      "계 22:13",
+    ]);
+    expect(found("시편 73편 25 에서", "시")).toEqual(["시편 73편 25"]);
+  });
+
+  it("비슷한 이름의 다른 책·낱말은 잡지 않는다", () => {
+    // 요한복음(요) ≠ 요한일서(요일) — 약자 바로 뒤에 숫자가 와야 한다
+    expect(found("요일 4:11 · 요한일서 4:17-18 · 요한1서 1:3", "요")).toEqual([]);
+    expect(found("요일 4:11 · 요한일서 4:17-18 · 요한1서 1:3 · 요 3:16", "요일")).toEqual([
+      "요일 4:11",
+      "요한일서 4:17-18",
+      "요한1서 1:3",
+    ]);
+    expect(found("고후 8:9 · 고린도후서 5:17", "고전")).toEqual([]);
+    expect(found("고후 8:9 · 고린도후서 5:17", "고후")).toEqual(["고후 8:9", "고린도후서 5:17"]);
+    // 앞 글자가 한글이면 다른 낱말의 끝 — 「필요 3:1」 「일본에 3:1」 「위에 3장」
+    expect(found("정말 필요 3:1 비율", "요")).toEqual([]);
+    expect(found("일본에 3:1로 · 책상 위에 3장", "에")).toEqual([]);
+    // 장 번호 뒤에 「:절」 「장」 「편」이 없으면 표기가 아니다
+    expect(found("창 밖을 보니 · 창문 3개 · 창 3개", "창")).toEqual([]);
+    expect(found("오후 3시 30분", "시")).toEqual([]);
+  });
+
+  it("66권 표에 없는 약자는 null·빈 결과", () => {
+    expect(bookMentionPattern("없음")).toBeNull();
+    expect(findBookMentions("창 1:1", "없음")).toEqual([]);
+  });
+
+  it("66권 모두 정식 이름·약자로 장:절 표기를 찾는다", () => {
+    for (const b of BOOKS) {
+      expect(found(`(${b.name} 1:1) · ${b.abbrev} 2:3-4`, b.abbrev)).toEqual([`${b.name} 1:1`, `${b.abbrev} 2:3-4`]);
+    }
   });
 });

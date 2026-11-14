@@ -1,5 +1,5 @@
 import { App, TFile, TFolder, getLinkpath } from "obsidian";
-import type { AtlasInputNote } from "./atlas";
+import { verseFromName, type AtlasInputNote } from "./atlas";
 import { dateFromProperty, sermonGroup, type SermonDate } from "./sermon-meta";
 import { BOOK_BY_ABBREV, BOOKS, BookInfo, bookByFolderName } from "./books";
 import { extractVerseTexts, listQuoteTitles, stripAnnotations } from "./note-parser";
@@ -854,5 +854,22 @@ export class BibleData {
       });
     }
     return { state: "ok", root: folder.path, notes };
+  }
+
+  /**
+   * 이 노트가 링크한 절 노트 중 한 책(약자)의 것 — 설교 성경 지도 미리보기에서 그 책 인용 위치를 강조할 때.
+   * resolvedLinks라 속성 링크도 들어 있다(본문에 없으면 미리보기 배지가 「속성에서만 인용」). 캐시만 읽는다.
+   */
+  versePathsLinkedFrom(notePath: string, abbrev: string): string[] {
+    const verseRoots = [this.otPath(), this.ntPath()].filter(Boolean).map(nfc);
+    if (verseRoots.length === 0) return [];
+    const out: string[] = [];
+    for (const dest of Object.keys(this.app.metadataCache.resolvedLinks[notePath] ?? {})) {
+      const q = nfc(dest);
+      if (!verseRoots.some((r) => isUnderFolder(q, r))) continue;
+      const name = q.slice(q.lastIndexOf("/") + 1).replace(/\.md$/, "");
+      if (verseFromName(name)?.book === abbrev) out.push(dest);
+    }
+    return out;
   }
 }

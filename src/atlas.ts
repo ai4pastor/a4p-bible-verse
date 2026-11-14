@@ -150,6 +150,46 @@ export function parsePassageText(text: string): PassageRef[] {
   return out;
 }
 
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * 본문 글자 속 이 책의 성경 표기 — 「창세기 22:1-18」 「(창 22:16-18)」 「창3:21」 「창세기 22장」
+ * 「고린도전서 15장 5-8절」 「시편 23편」 「시 139편 8절」. 설교 성경 지도 미리보기에서 링크 없이 글자로만 적은
+ * 인용도 찾아가게 하려는 것(어린이부 교재 원고 등).
+ * - 책 이름(정식·별칭·약자) 뒤에 장 번호와 「:절」 또는 「장」「편」이 와야 표기로 본다 — 「창 밖」 같은 낱말 제외.
+ * - 앞 글자가 한글이면 표기가 아니다 — 「필요 3:1」의 「요」, 「위에 3장」의 「에」.
+ * - 긴 이름부터 맞춘다 — 「요일 4:11」은 요한복음(요)으로 잡히지 않는다(약자 뒤에 숫자가 바로 와야 하므로).
+ * 66권 표에 없는 약자면 null.
+ */
+export function bookMentionPattern(abbrev: string): RegExp | null {
+  const book = BOOK_BY_ABBREV.get(abbrev);
+  if (!book) return null;
+  const tokens = [book.name, ...book.aliases, book.abbrev]
+    .sort((a, b) => b.length - a.length)
+    .map(escapeRe)
+    .join("|");
+  const n = "\\d{1,3}";
+  const dash = "\\s*[-~–—]\\s*";
+  // 3:16 · 3:16-18 · 3:36-4:2
+  const colon = `${n}\\s*:\\s*${n}(?:${dash}${n}(?:\\s*:\\s*${n})?)?`;
+  // 3장 · 23편 · 3장 16절 · 15장 5-8절 · 1장 1절-2장 3절 · 1장-3장
+  // (「절」 앞 빈칸은 「절」이 있을 때만 — 표기 뒤 빈칸까지 칠하지 않게)
+  const verse = `${n}(?:\\s*절)?`;
+  const chapter = `${n}\\s*[장편](?:\\s*${verse}(?:${dash}${n}(?:\\s*장\\s*${n})?(?:\\s*절)?)?|${dash}${n}\\s*[장편])?`;
+  return new RegExp(`(?<![가-힣])(?:${tokens})\\s*(?:${colon}|${chapter})`, "g");
+}
+
+/** 글자 속 이 책의 성경 표기 위치 — bookMentionPattern으로 찾은 [시작, 끝) */
+export function findBookMentions(text: string, abbrev: string): Array<{ start: number; end: number; text: string }> {
+  const re = bookMentionPattern(abbrev);
+  if (!re) return [];
+  const out: Array<{ start: number; end: number; text: string }> = [];
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    out.push({ start: m.index, end: m.index + m[0].length, text: m[0] });
+  }
+  return out;
+}
+
 /** "창 1:1-5" · "창 1장" · "시 23편" */
 export function passageLabel(p: PassageRef): string {
   if (p.verseStart === undefined) return `${p.book} ${p.chapter}${p.book === "시" ? "편" : "장"}`;

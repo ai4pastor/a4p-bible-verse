@@ -207,7 +207,8 @@
 /* 인용한 설교 미리보기 — 검색한 구절을 가리키는 링크·블록 강조.
    --text-highlight-bg는 글자색 대비가 보장되지 않아 .bible-verse-match와 같은 액센트 쌍 사용 */
 .bible-verse-preview-body a.internal-link.bible-verse-cite,
-.bible-verse-preview-body .internal-embed.bible-verse-cite {
+.bible-verse-preview-body .internal-embed.bible-verse-cite,
+.bible-verse-preview-body mark.bible-verse-cite {
   background: var(--interactive-accent);
   color: var(--text-on-accent);
   border-radius: 2px;
@@ -809,10 +810,73 @@
   overflow: hidden;
 }
 
+/* 창 안 = 왼쪽(지도·목록) + 오른쪽(설교 미리보기). 둘은 따로 스크롤한다 */
 .bible-verse-atlas-modal .modal-content {
+  display: flex;
+  gap: var(--size-4-4);
   flex: 1 1 auto;
   min-height: 0;
+  overflow: hidden;
+}
+
+.a4p-atlas-main {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow-y: auto;
+}
+
+/* 미리보기가 열리면 창을 넓혀 왼쪽 지도가 구약·신약 두 단을 지키게 한다(성경 구절 모달이 미리보기 때 넓어지듯) */
+.bible-verse-atlas-modal.is-previewing {
+  width: 96vw;
+  max-width: 1500px;
+}
+
+/* 오른쪽 미리보기 — 모양은 성경 구절 모달의 「인용한 설교」 미리보기(.bible-verse-preview-*) 그대로, 높이만 창 끝까지 */
+.bible-verse-atlas-modal .bible-verse-preview.is-open {
+  flex: 0 0 40%;
+  width: auto;
+  min-width: 340px;
+  max-height: none;
+}
+
+/* 미리보기 중인 설교 줄 */
+.a4p-atlas-row.is-active {
+  background: var(--background-modifier-hover);
+  box-shadow: inset 3px 0 0 0 var(--interactive-accent);
+}
+
+.a4p-atlas-list-hint {
+  margin: 0 0 6px;
+}
+
+/* 미리보기 머리줄 아래 — 같은 설교로 묶인 노트(판) 바꿔 보기 */
+.a4p-atlas-versions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.a4p-atlas-versions-label {
+  margin-right: 4px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.a4p-atlas-versions button.a4p-atlas-version {
+  height: auto;
+  padding: 1px 9px;
+  border-radius: var(--radius-s);
+  box-shadow: none;
+  background: var(--background-secondary);
+  font-size: var(--font-ui-smaller);
+}
+
+.a4p-atlas-versions button.a4p-atlas-version.is-active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
 }
 
 .a4p-atlas-controls {
@@ -1155,6 +1219,20 @@
   .a4p-atlas-row .a4p-atlas-title,
   .a4p-atlas-row .a4p-atlas-passage {
     grid-column: 1 / -1;
+  }
+}
+
+/* 좌우로 나누기엔 좁은 화면(휴대폰·좁은 창) — 미리보기가 목록 자리를 차지하고 ←·✕로 돌아온다 */
+@media (max-width: 760px) {
+  .bible-verse-atlas-modal.is-previewing .a4p-atlas-main {
+    display: none;
+  }
+
+  .bible-verse-atlas-modal .bible-verse-preview.is-open {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding-left: 0;
+    border-left: 0;
   }
 }
 
